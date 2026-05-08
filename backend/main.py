@@ -5,6 +5,7 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.api.v1.routers import api_router
 from app.core.config import settings
@@ -16,6 +17,20 @@ logger = logging.getLogger(__name__)
 
 AUDIT_LOG_CLEANUP_INTERVAL = 24 * 60 * 60  # 24 hours in seconds
 AUDIT_LOG_MAX_AGE_MINUTES = 24 * 60  # 24 hours
+DB_KEEPALIVE_INTERVAL = 4 * 60  # 4 minutes — keeps Neon free-tier compute warm
+
+
+async def _db_keepalive_loop() -> None:
+    """Ping the database every 4 minutes to prevent Neon free-tier auto-suspend."""
+    await asyncio.sleep(DB_KEEPALIVE_INTERVAL)  # initial delay before first ping
+    while True:
+        try:
+            async with AsyncSessionFactory() as session:
+                await session.execute(text("SELECT 1"))
+            logger.debug("DB keep-alive ping OK")
+        except Exception:
+            logger.warning("DB keep-alive ping failed — compute may be suspended")
+        await asyncio.sleep(DB_KEEPALIVE_INTERVAL)
 
 
 async def _audit_log_cleanup_loop() -> None:
@@ -37,12 +52,15 @@ async def _audit_log_cleanup_loop() -> None:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     setup_logging()
     cleanup_task = asyncio.create_task(_audit_log_cleanup_loop())
+    keepalive_task = asyncio.create_task(_db_keepalive_loop())
     yield
     cleanup_task.cancel()
-    try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
+    keepalive_task.cancel()
+    for task in (cleanup_task, keepalive_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 def create_app() -> FastAPI:
@@ -51,6 +69,7 @@ def create_app() -> FastAPI:
         version=settings.APP_VERSION,
         docs_url="/docs" if settings.DEBUG else None,
         redoc_url="/redoc" if settings.DEBUG else None,
+        lifespan=lifespan,
     )
 
     logger.info("CORS allowed_origins: %s", settings.ALLOWED_ORIGINS)

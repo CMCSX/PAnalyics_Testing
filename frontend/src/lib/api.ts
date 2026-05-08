@@ -159,33 +159,6 @@ export function createUser(
   });
 }
 
-export function setUserAdmin(token: string, userId: string, isAdmin: boolean) {
-  return apiFetch<UserResponse>(`/api/v1/users/${userId}/admin`, {
-    method: "PATCH",
-    token,
-    body: JSON.stringify({ is_superuser: isAdmin }),
-  });
-}
-
-export function adminUpdateUser(
-  token: string,
-  userId: string,
-  data: { full_name?: string; email?: string; password?: string }
-) {
-  return apiFetch<UserResponse>(`/api/v1/users/${userId}`, {
-    method: "PATCH",
-    token,
-    body: JSON.stringify(data),
-  });
-}
-
-export function deleteUser(token: string, userId: string) {
-  return apiFetch<void>(`/api/v1/users/${userId}`, {
-    method: "DELETE",
-    token,
-  });
-}
-
 export function changePassword(
   token: string,
   data: { current_password: string; new_password: string }
@@ -194,6 +167,33 @@ export function changePassword(
     method: "POST",
     token,
     body: JSON.stringify(data),
+  });
+}
+
+export function adminUpdateUser(
+  token: string,
+  userId: string,
+  data: Partial<{ email: string; full_name: string; new_password: string }>
+) {
+  return apiFetch<UserResponse>(`/api/v1/users/${userId}`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify(data),
+  });
+}
+
+export function setUserAdmin(token: string, userId: string, isAdmin: boolean) {
+  return apiFetch<UserResponse>(`/api/v1/users/${userId}/admin`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify({ is_superuser: isAdmin }),
+  });
+}
+
+export function deleteUser(token: string, userId: string) {
+  return apiFetch<void>(`/api/v1/users/${userId}`, {
+    method: "DELETE",
+    token,
   });
 }
 
@@ -276,13 +276,13 @@ export interface EnvironmentCampaignMap {
   touchpoints_by_bank: Record<string, string[]>;
 }
 
-export interface BankTouchpointCell {
-  environment: string;
+export interface BankTouchpointMatrixRow {
   bank: string;
   touchpoint: string;
+  environment: string;
   count: number;
-  account_count: number;
   total_amount: number;
+  account_count: number;
 }
 
 export interface DashboardSummary {
@@ -292,12 +292,12 @@ export interface DashboardSummary {
   total_banks: number;
   banks: BankSummary[];
   touchpoints: TouchpointSummary[];
+  bank_touchpoint_matrix: BankTouchpointMatrixRow[];
   dates: string[];
   environments: string[];
   months: string[];
   environment_map: EnvironmentCampaignMap[];
   monthly_trend: { month: string; amount: number }[];
-  bank_touchpoint_matrix: BankTouchpointCell[];
   session_id: string | null;
 }
 
@@ -365,6 +365,28 @@ export function getDashboardSummary(token: string, sessionId: string, params: { 
 /** Fetch ALL records for a session in a single request — use for exports only. */
 export function exportAllRecords(token: string, sessionId: string) {
   return apiFetch<PaymentRecordOut[]>(`/api/v1/uploads/${sessionId}/export/records`, { token });
+}
+
+/**
+ * Triggers a browser download of all records as a CSV file using the server-side
+ * streaming endpoint. Safe for very large sessions (no memory cap on the server).
+ */
+export async function downloadAllRecordsCSV(token: string, sessionId: string, fileName: string): Promise<void> {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? ""}/api/v1/uploads/${sessionId}/export/csv`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const detail = body?.detail || `Request failed (${res.status})`;
+    throw new Error(detail);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName.replace(/\.[^/.]+$/, "") + "_export.csv";
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export interface AuditLogEntry {

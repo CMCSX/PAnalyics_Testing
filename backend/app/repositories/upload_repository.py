@@ -237,33 +237,6 @@ class UploadRepository:
         await self.session.commit()
         return True
 
-    async def prune_old_sessions(self, user_id: str, keep: int = 5) -> int:
-        """Delete sessions beyond the most recent `keep` for a user.
-
-        Uses a subquery to identify the oldest sessions efficiently without
-        loading full ORM objects. The DB-level ON DELETE CASCADE on payment_records
-        ensures child rows are removed automatically.
-        Returns the number of sessions deleted.
-        """
-        # Fetch IDs of sessions to keep (most recent `keep`)
-        keep_result = await self.session.execute(
-            select(UploadSession.id)
-            .where(UploadSession.user_id == user_id)
-            .order_by(UploadSession.uploaded_at.desc())
-            .limit(keep)
-        )
-        keep_ids = list(keep_result.scalars().all())
-
-        # Delete sessions NOT in the keep list
-        del_result = await self.session.execute(
-            sql_delete(UploadSession).where(
-                UploadSession.user_id == user_id,
-                UploadSession.id.not_in(keep_ids),
-            )
-        )
-        await self.session.commit()
-        return del_result.rowcount
-
     async def delete_transaction(self, record_id: str, session_id: str, user_id: str) -> bool:
         """Delete a single payment record. Returns True if deleted."""
         # Verify session ownership
@@ -403,17 +376,25 @@ class UploadRepository:
         )
         if not session_check.scalar_one_or_none():
             return 0
-        # Delete and use the actual rowcount (avoids race conditions with pre-delete COUNT)
-        result = await self.session.execute(
+        # Count records to delete
+        count_result = await self.session.execute(
+            select(func.count(PaymentRecord.id)).where(
+                PaymentRecord.session_id == session_id,
+                PaymentRecord.payment_date >= date_from,
+                PaymentRecord.payment_date <= date_to,
+            )
+        )
+        count = count_result.scalar() or 0
+        if count == 0:
+            return 0
+        # Delete
+        await self.session.execute(
             sql_delete(PaymentRecord).where(
                 PaymentRecord.session_id == session_id,
                 PaymentRecord.payment_date >= date_from,
                 PaymentRecord.payment_date <= date_to,
             )
         )
-        count = result.rowcount
-        if count == 0:
-            return 0
         # Update session totals
         await self._update_session_totals(session_id)
         await self.session.commit()
@@ -526,6 +507,29 @@ class UploadRepository:
             .order_by(PaymentRecord.payment_date.desc())
         )
         return list(result.scalars().all())
+
+    async def stream_records_for_export(
+        self, session_id: str, user_id: str, batch_size: int = 1000
+    ):
+        """Yield PaymentRecord objects in batches for memory-efficient streaming exports.
+        Uses server-side cursor via yield_per to avoid loading all records into RAM.
+        """
+        session_check = await self.session.execute(
+            select(UploadSession.id).where(
+                UploadSession.id == session_id,
+                UploadSession.user_id == user_id,
+            )
+        )
+        if not session_check.scalar_one_or_none():
+            return
+        result = await self.session.stream_scalars(
+            select(PaymentRecord)
+            .where(PaymentRecord.session_id == session_id)
+            .order_by(PaymentRecord.payment_date.desc())
+            .execution_options(yield_per=batch_size)
+        )
+        async for record in result:
+            yield record
 
     async def get_records_limited(
         self, session_id: str, user_id: str, limit: int
@@ -745,58 +749,47 @@ class UploadRepository:
 
         # Monthly trend: sum of payment_amount grouped by year-month (first 7 chars of payment_date)
         from sqlalchemy import literal_column
-        from sqlalchemy import case, or_ as sa_or
-        # month key: prefer payment_date (first 7 chars), fall back to month column
-        # when it is already in YYYY-MM format (exactly 7 chars, e.g. "2026-01").
-        pd_month_expr = literal_column("LEFT(payment_records.payment_date, 7)")
-        month_key = func.coalesce(
-            case((func.length(PaymentRecord.payment_date) >= 7, pd_month_expr), else_=None),
-            case((func.length(PaymentRecord.month) == 7, PaymentRecord.month), else_=None),
-        )
+        month_expr = literal_column("LEFT(payment_records.payment_date, 7)")
         monthly_rows = await self.session.execute(
             select(
-                month_key.label("month"),
+                month_expr.label("month"),
                 func.sum(PaymentRecord.payment_amount).label("amount"),
             )
             .where(PaymentRecord.session_id == session_id, *date_conditions)
-            .where(
-                sa_or(
-                    func.length(PaymentRecord.payment_date) >= 7,
-                    func.length(PaymentRecord.month) == 7,
-                )
-            )
-            .group_by(month_key)
-            .order_by(month_key)
+            .where(PaymentRecord.payment_date.isnot(None))
+            .where(func.length(PaymentRecord.payment_date) >= 7)
+            .group_by(month_expr)
+            .order_by(month_expr)
         )
         monthly_trend = [
             {"month": row.month, "amount": float(row.amount or 0)}
             for row in monthly_rows.all()
         ]
 
-        # Per-(environment, bank, touchpoint) breakdown — lets the frontend compute
-        # correctly filtered totals when in API-fallback mode (no in-memory data).
-        ebt_rows = await self.session.execute(
+        # Bank × touchpoint × environment matrix (enables accurate cross-dimensional filtering on the frontend)
+        matrix_rows = await self.session.execute(
             select(
-                PaymentRecord.environment,
                 PaymentRecord.bank,
                 PaymentRecord.touchpoint,
+                PaymentRecord.environment,
                 func.count(PaymentRecord.id).label("count"),
-                func.count(func.distinct(PaymentRecord.account)).label("account_count"),
                 func.sum(PaymentRecord.payment_amount).label("total_amount"),
+                func.count(func.distinct(PaymentRecord.account)).label("account_count"),
             )
             .where(PaymentRecord.session_id == session_id, *date_conditions)
-            .group_by(PaymentRecord.environment, PaymentRecord.bank, PaymentRecord.touchpoint)
+            .group_by(PaymentRecord.bank, PaymentRecord.touchpoint, PaymentRecord.environment)
+            .order_by(PaymentRecord.bank, PaymentRecord.touchpoint, PaymentRecord.environment)
         )
         bank_touchpoint_matrix = [
             {
-                "environment": row.environment or "",
-                "bank": row.bank,
+                "bank": row.bank or "Unknown",
                 "touchpoint": row.touchpoint or "Unknown",
+                "environment": row.environment or "Unknown",
                 "count": row.count,
+                "total_amount": float(row.total_amount or 0.0),
                 "account_count": row.account_count,
-                "total_amount": float(row.total_amount or 0),
             }
-            for row in ebt_rows.all()
+            for row in matrix_rows.all()
         ]
 
         return {

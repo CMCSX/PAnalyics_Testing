@@ -178,6 +178,7 @@ export function ReportBuilder({
 
   // ── Section operations ──
   const addSection = (type: SectionType) => {
+    // eslint-disable-next-line react-hooks/purity
     const id = `sec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const defaultConfigs: Record<SectionType, SectionConfig> = {
       kpi_cards: { kpis: ["totalPayments", "totalAmount", "totalAccounts", "totalBanks"] },

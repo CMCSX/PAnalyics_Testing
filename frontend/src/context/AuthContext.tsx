@@ -46,6 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const token = localStorage.getItem(TOKEN_KEY);
     if (!token) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsLoading(false);
       if (pathname !== "/login") router.replace("/login");
       return;

@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { DateFilter, DateRange, CustomDateRange, filterByDateRange, dateRangeToBounds } from "@/components/DateFilter";
-import { getTransactions, getDashboardSummary, deleteTransaction, deleteTransactionsByDateRange, getUpload, deleteUpload, createTransaction, updateTransaction, type PaymentRecordOut } from "@/lib/api";
+import { getTransactions, getDashboardSummary, deleteTransaction, deleteTransactionsByDateRange, getUpload, deleteUpload, createTransaction, updateTransaction, downloadAllRecordsCSV, type PaymentRecordOut } from "@/lib/api";
 import { useDashboard, useTransactions, queryKeys } from "@/lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -22,7 +22,7 @@ function fmt(n: number): string {
 }
 
 export default function TransactionsPage() {
-  const { data, setData, rawData, sessionId, setSessionId, sessionValidated } = useData();
+  const { data, setData, rawData, sessionId, setSessionId, sessionValidated, fileName } = useData();
   const { token } = useAuth();
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
@@ -67,9 +67,9 @@ export default function TransactionsPage() {
   };
   const { data: txPage, isFetching: apiLoading, error: txError } = useTransactions(token, sessionId, apiFilters, sessionValidated);
 
-  // Auto-clear stale session only on 404 (session genuinely deleted). Ignore 500s — they are transient server errors.
+  // Auto-clear stale session on 404 or 500 (e.g. after DB migration / new database)
   useEffect(() => {
-    if (txError && (txError.message.includes("404") || txError.message.includes("Not Found"))) {
+    if (txError && (txError.message.includes("404") || txError.message.includes("Not Found") || txError.message.includes("500") || txError.message.includes("Internal Server Error"))) {
       setSessionId(null);
     }
   }, [txError, setSessionId]);
@@ -207,11 +207,19 @@ export default function TransactionsPage() {
   // Reset to page 1 when filters change
   const resetPage = () => setCurrentPage(1);
 
-  const handleExportCSV = () => {
-    const rows = usingApi
-      ? (apiRows ?? []).map((r) => [r.bank, r.payment_date, r.payment_amount.toFixed(2), r.account, r.touchpoint, r.environment ?? ""])
-      : inMemoryFiltered.map((p) => [p.bank, p.paymentDate, p.paymentAmount.toFixed(2), p.account, p.touchpoint, p.environment ?? ""]);
-    // Quote any field that contains a comma, double-quote, or newline
+  const handleExportCSV = async () => {
+    // If there's a backend session, use the server-side streaming endpoint (safe for any size)
+    if (token && sessionId) {
+      try {
+        await downloadAllRecordsCSV(token, sessionId, fileName || "transactions");
+        toast.success("CSV download started.");
+      } catch (err) {
+        toast.error(`Export failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      }
+      return;
+    }
+    // Fallback: in-memory export (local files with no session)
+    const rows = inMemoryFiltered.map((p) => [p.bank, p.paymentDate, p.paymentAmount.toFixed(2), p.account, p.touchpoint, p.environment ?? ""]);
     const escapeField = (f: string | number | null | undefined) => {
       const s = String(f ?? "");
       return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -791,7 +799,7 @@ export default function TransactionsPage() {
               {(() => {
                 const pages: number[] = [];
                 let start = Math.max(1, currentPage - 2);
-                let end = Math.min(displayTotalPages, start + 4);
+                const end = Math.min(displayTotalPages, start + 4);
                 start = Math.max(1, end - 4);
                 for (let i = start; i <= end; i++) pages.push(i);
                 return pages.map((pg) => (

@@ -55,11 +55,12 @@ export default function DashboardPage() {
   };
 
   // Auto-clear stale session only on 404 (session genuinely deleted). Ignore 500s — they are transient server errors.
+  // Guard: only clear if sessionId is still set to avoid redundant clears from multiple pages.
   useEffect(() => {
-    if (apiError && (apiError.message.includes("404") || apiError.message.includes("Not Found"))) {
+    if (sessionId && apiError && (apiError.message.includes("404") || apiError.message.includes("Not Found"))) {
       setSessionId(null);
     }
-  }, [apiError, setSessionId]);
+  }, [apiError, sessionId, setSessionId]);
 
   // Portfolio tab filters
   const [selectedEnvironments, setSelectedEnvironments] = useState<Set<string>>(new Set());
@@ -449,8 +450,11 @@ export default function DashboardPage() {
   const tpTotal = channelAnalytics.reduce((s, t) => s + t.count, 0);
   const tpTotalAmount = channelAnalytics.reduce((s, t) => s + Math.round(t.totalAmount * 100), 0) / 100;
 
-  // ── Shared pagination reset on tab change ──
-  useEffect(() => { setPortfolioBankPage(1); }, [activeTab, selectedEnvironments, selectedBanks, dateRange]);
+  // ── Shared pagination reset on tab change / filter change ──
+  // Note: selectedBanks is intentionally excluded — changing bank filter while on a paginated
+  // view should not reset the page (user may be selecting banks from a later page).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setPortfolioBankPage(1); }, [activeTab, selectedEnvironments, dateRange]);
 
   const TABS = [
     { id: "summary" as const, label: "Overview", icon: TrendingUp },
@@ -569,7 +573,7 @@ export default function DashboardPage() {
     const totalPages = Math.max(1, Math.ceil(total / rowsPerPage));
     if (totalPages <= 1) return null;
     const pages: number[] = [];
-    let start = Math.max(1, page - 2); let end = Math.min(totalPages, start + 4); start = Math.max(1, end - 4);
+    let start = Math.max(1, page - 2); const end = Math.min(totalPages, start + 4); start = Math.max(1, end - 4);
     for (let i = start; i <= end; i++) pages.push(i);
     return (
       <div className="px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-gray-200 dark:border-gray-700">
@@ -860,7 +864,7 @@ export default function DashboardPage() {
               <div className="flex items-start justify-between mb-4">
                 <div>
                   <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">% Share by Bank</h3>
-                  <p className="text-xs text-gray-400 dark:text-gray-500">Each bank's percentage of total collected amount — all banks ranked</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">Each bank&apos;s percentage of total collected amount — all banks ranked</p>
                 </div>
               </div>
               {showSkeleton ? <ChartSkeleton type="bar" height={280} /> : (() => {

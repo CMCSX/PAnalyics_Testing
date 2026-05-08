@@ -1,7 +1,10 @@
 import json
+import csv
+import io
 import re
 import uuid
 from decimal import Decimal
+from typing import AsyncIterator
 
 
 class _DecimalEncoder(json.JSONEncoder):
@@ -11,6 +14,7 @@ class _DecimalEncoder(json.JSONEncoder):
         return super().default(o)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies.auth import get_current_user
@@ -39,6 +43,8 @@ from app.schemas.upload import (
 )
 
 router = APIRouter(prefix="/uploads", tags=["Uploads"])
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 @router.post("", response_model=UploadSessionOut, status_code=status.HTTP_201_CREATED)
@@ -69,8 +75,6 @@ async def create_upload(
         record_count=session.total_records,
         total_amount=session.total_amount,
     )
-    # Keep only the 5 most recent sessions per user; delete older ones
-    await repo.prune_old_sessions(user_id=current_user.id, keep=5)
     # Notify all SSE-connected clients so their uploads list auto-refreshes
     await broadcast_new_upload(session.id, session.file_name)
     return UploadSessionOut.model_validate(session)
@@ -144,8 +148,6 @@ async def upload_file(
         record_count=session.total_records,
         total_amount=session.total_amount,
     )
-    # Keep only the 5 most recent sessions per user; delete older ones
-    await repo.prune_old_sessions(user_id=current_user.id, keep=5)
     await broadcast_new_upload(session.id, session.file_name)
     return UploadSessionOut.model_validate(session)
 
@@ -168,15 +170,17 @@ async def get_unified_audit_log(
 ) -> list[UnifiedAuditLogEntry]:
     """List file actions for the current user (up to 50 entries)."""
     audit_repo = AuditLogRepository(db)
-    logs = await audit_repo.list_user_logs(current_user.id, limit=20)
+    logs = await audit_repo.list_user_logs(current_user.id, limit=50)
 
-    # Determine which entries can be undone: 3 most recent non-undone entries that have snapshot_data
+    # Actions that support undo — must match branches in undo_audit_entry
+    _UNDOABLE_ACTIONS = {"file_upload", "file_delete", "record_delete", "record_bulk_delete", "record_create", "record_update"}
+    # Determine which entries can be undone: 10 most recent non-undone entries that have snapshot_data
     undoable_ids: set[str] = set()
     count = 0
     for log in logs:  # already sorted by created_at desc
-        if count >= 3:
+        if count >= 10:
             break
-        if not log.is_undone and log.snapshot_data:
+        if not log.is_undone and log.snapshot_data and log.action in _UNDOABLE_ACTIONS:
             undoable_ids.add(log.id)
             count += 1
 
@@ -340,15 +344,69 @@ async def export_all_records(
     db: AsyncSession = Depends(get_db),
 ) -> list[PaymentRecordOut]:
     """Return ALL payment records for a session in a single response (no pagination).
-    Intended for client-side export. Use /transactions for normal paginated access."""
+    Intended for client-side export. Use /transactions for normal paginated access.
+    Hard-capped at 500,000 records to prevent OOM on the server."""
+    _EXPORT_RECORD_LIMIT = 500_000
     repo = UploadRepository(db)
+    # Check session metadata first to enforce cap without loading records
+    session_meta = await repo.get_session_metadata(session_id, current_user.id)
+    if not session_meta:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload session not found.")
+    if session_meta.total_records > _EXPORT_RECORD_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"Session contains {session_meta.total_records:,} records which exceeds the export limit "
+                f"of {_EXPORT_RECORD_LIMIT:,}."
+            ),
+        )
     records = await repo.get_all_records_for_export(session_id, current_user.id)
-    if not records:
-        # Check whether session exists vs. truly empty
-        session = await repo.get_session_metadata(session_id, current_user.id)
-        if not session:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload session not found.")
     return [PaymentRecordOut.model_validate(r) for r in records]
+
+
+@router.get("/{session_id}/export/csv", response_class=StreamingResponse)
+async def export_records_csv_stream(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Stream ALL payment records for a session as a CSV file.
+    Uses server-side cursor streaming — safe for sessions with millions of records
+    since data is never fully loaded into memory.
+    """
+    repo = UploadRepository(db)
+    session_meta = await repo.get_session_metadata(session_id, current_user.id)
+    if not session_meta:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload session not found.")
+
+    safe_name = re.sub(r"[^\w\-.]", "_", session_meta.file_name or "export")
+
+    async def csv_row_generator() -> AsyncIterator[str]:
+        # Write CSV header
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["Bank", "Account", "Touchpoint", "Payment Date", "Payment Amount", "Environment"])
+        yield buf.getvalue()
+
+        # Stream rows in batches
+        async for record in repo.stream_records_for_export(session_id, current_user.id):
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow([
+                record.bank,
+                record.account,
+                record.touchpoint or "",
+                record.payment_date or "",
+                float(record.payment_amount),
+                record.environment or "",
+            ])
+            yield buf.getvalue()
+
+    return StreamingResponse(
+        csv_row_generator(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.csv"'},
+    )
 
 
 @router.get("/{session_id}/dashboard", response_model=DashboardSummary)
@@ -649,6 +707,7 @@ async def delete_transaction(
         snapshot = json.dumps({
             "session_id": session_id,
             "record": {
+                "id": target_record.id,
                 "bank": target_record.bank,
                 "account": target_record.account,
                 "touchpoint": target_record.touchpoint,
@@ -683,7 +742,6 @@ async def delete_transactions_by_date_range(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Mass delete transactions within a date range. Returns count of deleted records."""
-    _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
     if not date_from or not date_to:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="date_from and date_to are required.")
     if not _DATE_RE.match(date_from) or not _DATE_RE.match(date_to):
@@ -799,18 +857,19 @@ async def undo_audit_entry(
     if not entry.snapshot_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No snapshot data available for undo.")
 
-    # Verify this entry is among the 3 most recent undoable entries for this user
-    logs = await audit_repo.list_user_logs(current_user.id, limit=10)
+    # Verify this entry is among the 10 most recent undoable entries for this user
+    _UNDOABLE_ACTIONS = {"file_upload", "file_delete", "record_delete", "record_bulk_delete", "record_create", "record_update"}
+    logs = await audit_repo.list_user_logs(current_user.id, limit=50)
     undoable_ids: set[str] = set()
     count = 0
     for log in logs:
-        if count >= 3:
+        if count >= 10:
             break
-        if not log.is_undone and log.snapshot_data:
+        if not log.is_undone and log.snapshot_data and log.action in _UNDOABLE_ACTIONS:
             undoable_ids.add(log.id)
             count += 1
     if entry_id not in undoable_ids:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only the 3 most recent entries can be undone.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only the 10 most recent entries can be undone.")
 
     snapshot = json.loads(entry.snapshot_data)
 
@@ -851,10 +910,12 @@ async def undo_audit_entry(
             db.add(record)
 
     elif entry.action == "record_delete":
-        # Restore a single deleted record
+        # Restore a single deleted record (preserve original ID if available)
         record_data = snapshot.get("record", {})
         session_id = snapshot.get("session_id", entry.session_id)
+        orig_id = record_data.get("id")
         record = PaymentRecord(
+            **(({"id": orig_id} if orig_id else {})),
             session_id=session_id,
             bank=record_data.get("bank", ""),
             account=record_data.get("account", ""),
@@ -870,23 +931,51 @@ async def undo_audit_entry(
         repo = UploadRepository(db)
         await repo._update_session_totals(session_id)
 
+    elif entry.action == "record_create":
+        # Undo a record creation = delete the created record
+        record_data = snapshot.get("record", {})
+        session_id = snapshot.get("session_id", entry.session_id)
+        record_id = record_data.get("id")
+        if not record_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot undo: created record ID is missing from snapshot.")
+        repo = UploadRepository(db)
+        deleted = await repo.delete_transaction(
+            record_id=record_id, session_id=session_id, user_id=entry.user_id
+        )
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Created record no longer exists — undo not needed.")
+
+    elif entry.action == "record_update":
+        # Undo a record update = restore the 'before' state
+        before = snapshot.get("before", {})
+        session_id = snapshot.get("session_id", entry.session_id)
+        record_id = before.get("id")
+        if not record_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot undo: original record ID is missing from snapshot.")
+        repo = UploadRepository(db)
+        restored = await repo.update_transaction(
+            record_id=record_id,
+            session_id=session_id,
+            user_id=entry.user_id,
+            bank=before.get("bank", ""),
+            account=before.get("account", ""),
+            payment_amount=before.get("payment_amount", 0.0),
+            touchpoint=before.get("touchpoint"),
+            payment_date=before.get("payment_date"),
+            environment=before.get("environment"),
+            month=before.get("month"),
+        )
+        if not restored:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record no longer exists — cannot undo update.")
+
     elif entry.action == "record_bulk_delete":
-        # Detect date-range deletes that were not snapshotted (no individual records stored)
-        if "records" not in snapshot:
-            date_from = snapshot.get("date_from", "unknown")
-            date_to = snapshot.get("date_to", "unknown")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Undo is not available for date-range deletions ({date_from} to {date_to}). "
-                    "Individual records were not snapshotted and cannot be automatically restored."
-                ),
-            )
-        # Restore bulk deleted records
+        # Restore bulk deleted records (preserve original IDs where available)
         records_data = snapshot.get("records", [])
         session_id = snapshot.get("session_id", entry.session_id)
         for rec in records_data:
+            orig_id = rec.get("id")
             record = PaymentRecord(
+                **(({"id": orig_id} if orig_id else {})),
                 session_id=session_id,
                 bank=rec.get("bank", ""),
                 account=rec.get("account", ""),

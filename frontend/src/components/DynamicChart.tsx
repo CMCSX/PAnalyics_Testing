@@ -359,6 +359,7 @@ export function DynamicChart({
         };
 
         // Enhanced legend formatter that shows name + percentage
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const legendFormatter = (value: string, entry: any) => {
           const itemValue = Number(entry.payload[dataKey] || 0);
           const percentage = total > 0 ? ((itemValue / total) * 100).toFixed(1) : "0.0";

@@ -56,6 +56,7 @@ export function DateFilter({ value, onChange, customRange, dataStartDate }: Date
       setSelected(customRange ? { from: customRange.from, to: customRange.to } : undefined);
       setCalendarMonth(customRange?.from ?? new Date());
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calendarOpen]);
 
   const handleOptionClick = (val: DateRange) => {

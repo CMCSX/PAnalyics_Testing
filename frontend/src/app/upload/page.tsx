@@ -567,10 +567,10 @@ export default function UploadPage() {
         allPayments.push(...payments);
       }
 
-      // Deduplicate by account + date + amount
+      // Deduplicate by bank + account + date + amount + touchpoint
       const seen = new Set<string>();
       const unique = allPayments.filter((p) => {
-        const key = `${p.account}|${p.paymentDate}|${p.paymentAmount}`;
+        const key = `${p.bank}|${p.account}|${p.paymentDate}|${p.paymentAmount}|${p.touchpoint}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
@@ -585,33 +585,35 @@ export default function UploadPage() {
 
       const duplicatesRemoved = allPayments.length - unique.length;
 
-      // Build analytics
-      const bankMap = new Map<string, { totalAmount: number; paymentCount: number; accounts: Set<string> }>();
-      const tpMap = new Map<string, { count: number; totalAmount: number }>();
-      let totalAmount = 0;
+      // Build analytics using cent-based integer arithmetic to avoid float rounding errors
+      const bankMap = new Map<string, { totalAmountCents: number; paymentCount: number; accounts: Set<string> }>();
+      const tpMap = new Map<string, { count: number; totalAmountCents: number }>();
+      let totalAmountCents = 0;
       const allAccounts = new Set<string>();
 
       for (const p of unique) {
-        totalAmount += p.paymentAmount;
+        totalAmountCents += Math.round(p.paymentAmount * 100);
         allAccounts.add(p.account);
-        if (!bankMap.has(p.bank)) bankMap.set(p.bank, { totalAmount: 0, paymentCount: 0, accounts: new Set() });
+        if (!bankMap.has(p.bank)) bankMap.set(p.bank, { totalAmountCents: 0, paymentCount: 0, accounts: new Set() });
         const b = bankMap.get(p.bank)!;
-        b.totalAmount += p.paymentAmount;
+        b.totalAmountCents += Math.round(p.paymentAmount * 100);
         b.paymentCount++;
         b.accounts.add(p.account);
-        if (!tpMap.has(p.touchpoint)) tpMap.set(p.touchpoint, { count: 0, totalAmount: 0 });
+        if (!tpMap.has(p.touchpoint)) tpMap.set(p.touchpoint, { count: 0, totalAmountCents: 0 });
         const t = tpMap.get(p.touchpoint)!;
         t.count++;
-        t.totalAmount += p.paymentAmount;
+        t.totalAmountCents += Math.round(p.paymentAmount * 100);
       }
+
+      const totalAmount = totalAmountCents / 100;
 
       const bankAnalytics = Array.from(bankMap.entries())
         .map(([bank, d]) => ({
           bank,
           accountCount: d.accounts.size,
-          totalAmount: d.totalAmount,
+          totalAmount: d.totalAmountCents / 100,
           debtorSum: 0,
-          percentage: totalAmount > 0 ? (d.totalAmount / totalAmount) * 100 : 0,
+          percentage: totalAmountCents > 0 ? (d.totalAmountCents / totalAmountCents) * 100 : 0,
           paymentCount: d.paymentCount,
         }))
         .sort((a, b) => b.totalAmount - a.totalAmount);
@@ -620,8 +622,8 @@ export default function UploadPage() {
         .map(([touchpoint, d]) => ({
           touchpoint,
           count: d.count,
-          totalAmount: d.totalAmount,
-          percentage: totalAmount > 0 ? (d.totalAmount / totalAmount) * 100 : 0,
+          totalAmount: d.totalAmountCents / 100,
+          percentage: totalAmountCents > 0 ? (d.totalAmountCents / totalAmountCents) * 100 : 0,
         }))
         .sort((a, b) => b.count - a.count);
 

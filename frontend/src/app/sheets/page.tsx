@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback, Component, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { AgGridReact, useGridFilter } from "ag-grid-react";
 import type { CustomFilterProps } from "ag-grid-react";
@@ -18,6 +18,7 @@ import { useAuth } from "@/context/AuthContext";
 import {
   createAuditLog,
   exportAllRecords,
+  downloadAllRecordsCSV,
   createTransaction,
   updateTransaction,
   bulkDeleteTransactions,
@@ -91,6 +92,38 @@ const emptyRow: SheetRow = {
   touchpoint: "",
   environment: "",
 };
+
+/* ------------------------------------------------------------------ */
+/*  Error Boundary for AG Grid                                        */
+/* ------------------------------------------------------------------ */
+class GridErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; message: string }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: "" };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, message: error.message };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-64 gap-3 rounded-2xl border border-destructive/40 bg-destructive/5 text-destructive">
+          <span className="text-lg font-semibold">Grid Error</span>
+          <span className="text-sm text-muted-foreground max-w-sm text-center">
+            {this.state.message || "An unexpected error occurred while rendering the grid."}
+          </span>
+          <button
+            className="mt-2 rounded-xl border border-destructive/40 px-4 py-1 text-sm hover:bg-destructive/10"
+            onClick={() => this.setState({ hasError: false, message: "" })}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /*  Custom Set Filter (AG Grid Community doesn't have agSetColumnFilter) */
@@ -177,8 +210,8 @@ export default function SheetsPage() {
 
   const [rows, setRows] = useState<SheetRow[]>([]);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [loadProgress, setLoadProgress] = useState<{ loaded: number; total: number } | null>(null);
-  const [fullLoadDone, setFullLoadDone] = useState(false);
+  const [isAwaitingData, setIsAwaitingData] = useState(false);
+  const [awaitingTotal, setAwaitingTotal] = useState<number | null>(null);
   const needsFullLoadRef = useRef<{ total: number } | null>(null);
   const [fullLoadTrigger, setFullLoadTrigger] = useState(0);
   const gridRef = useRef<AgGridReact<SheetRow>>(null);
@@ -436,26 +469,25 @@ export default function SheetsPage() {
   useEffect(() => {
     if (!uploadDetail) return;
     if (dataIsComplete) return; // DataContext already has all records for this session
-    // Capture truncation info before uploadDetail disappears
     if (uploadDetail.records_truncated) {
+      // Dataset exceeds inline cap — show loading spinner and fetch everything
       needsFullLoadRef.current = { total: uploadDetail.total_records };
-    }
-    const newRows = uploadDetail.records.map((r) => ({
-      id: r.id,
-      bank: r.bank,
-      paymentDate: r.payment_date ?? "",
-      paymentAmount: r.payment_amount,
-      account: r.account,
-      touchpoint: r.touchpoint ?? "",
-      environment: r.environment ?? "",
-    }));
-    setRows(newRows);
-    syncToContext(newRows);
-    if (uploadDetail.records_truncated) {
-      // Trigger full-load — dataset exceeds 10k inline cap
+      setAwaitingTotal(uploadDetail.total_records);
+      setIsAwaitingData(true);
       setFullLoadTrigger((n) => n + 1);
     } else {
-      // All records fit in the inline response — mark complete immediately
+      // All records fit — show them directly
+      const newRows = uploadDetail.records.map((r) => ({
+        id: r.id,
+        bank: r.bank,
+        paymentDate: r.payment_date ?? "",
+        paymentAmount: r.payment_amount,
+        account: r.account,
+        touchpoint: r.touchpoint ?? "",
+        environment: r.environment ?? "",
+      }));
+      setRows(newRows);
+      syncToContext(newRows);
       if (sessionId) completedFullLoads.add(sessionId);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -470,7 +502,7 @@ export default function SheetsPage() {
     let cancelled = false;
 
     const fetchAll = async () => {
-      setLoadProgress({ loaded: 0, total: totalRecords });
+      // loading state is already set via isAwaitingData
       try {
         const records = await exportAllRecords(token, sessionId);
         const allRows: SheetRow[] = records.map((r) => ({
@@ -482,26 +514,36 @@ export default function SheetsPage() {
           touchpoint: r.touchpoint ?? "",
           environment: r.environment ?? "",
         }));
-        // Always sync context and mark complete — even if the component unmounted
-        // (user navigated away). This ensures the dashboard and other pages see
-        // the full dataset when they read from DataContext.
-        syncToContext(allRows);
+        // Always mark complete and update DataContext — safe even if component unmounted.
+        // This ensures back-navigation after mid-load navigation shows the full dataset.
         if (sessionId) completedFullLoads.add(sessionId);
-        // Only update local component state if still mounted
         if (!cancelled) {
-          setLoadProgress({ loaded: allRows.length, total: totalRecords });
+          setIsAwaitingData(false);
           setRows(allRows);
+          syncToContext(allRows);
+        } else {
+          // Component unmounted mid-fetch — update DataContext directly without
+          // touching component-local state (setRows) or skipNextDataEffect ref.
+          // On remount, the [data] effect will pick up the full dataset from context.
+          const payments = allRows.map((r) => ({
+            id: r.id ?? undefined,
+            bank: r.bank,
+            paymentDate: r.paymentDate,
+            paymentAmount: Number.isFinite(r.paymentAmount) ? r.paymentAmount : 0,
+            account: r.account,
+            touchpoint: r.touchpoint ?? "",
+            environment: r.environment ?? "",
+          }));
+          const parsed = recalcParsedData(payments);
+          setData(parsed);
+          setRawData(parsed.raw);
         }
       } catch (err) {
         if (!cancelled) {
+          setIsAwaitingData(false);
           toast.error(
-            `Failed to load all records: ${err instanceof Error ? err.message : "Network error"}. Showing first 10,000 rows.`
+            `Failed to load all records: ${err instanceof Error ? err.message : "Network error"}.`
           );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadProgress(null);
-          setFullLoadDone(true);
         }
       }
     };
@@ -789,7 +831,15 @@ export default function SheetsPage() {
   const handleExport = useCallback(
     async (format: "excel" | "csv") => {
       try {
-        // Always export current in-memory rows (reflects live edits/deletes)
+        // For CSV, if we have a backend session, use the server-side streaming endpoint
+        // which is safe for any dataset size (no memory cap).
+        if (format === "csv" && token && sessionId) {
+          await downloadAllRecordsCSV(token, sessionId, fileName || "export");
+          toast.success("CSV download started.");
+          return;
+        }
+
+        // Excel export (and CSV fallback when no session) uses in-memory rows
         const exportData = rows.map((r) => ({
           Bank: r.bank,
           "Payment Date": r.paymentDate,
@@ -807,17 +857,45 @@ export default function SheetsPage() {
         toast.success(
           `Exported ${exportData.length} records to ${format === "excel" ? "Excel" : "CSV"}`
         );
-      } catch {
-        toast.error("Export failed");
+      } catch (err) {
+        toast.error(`Export failed: ${err instanceof Error ? err.message : "Unknown error"}`);
       }
     },
-    [rows]
+    [rows, token, sessionId, fileName]
   );
 
-  const isInitialLoading =
-    uploadLoading ||
-    (rows.length === 0 && sessionId && !data) ||
-    (fullLoadTrigger > 0 && !loadProgress && !dataIsComplete && !fullLoadDone);
+  /* ---- Loading state (fetching from backend or awaiting full dataset) ---- */
+  if (uploadLoading || isAwaitingData || (rows.length === 0 && sessionId && !data)) {
+    return (
+      <div className="px-4 sm:px-8 py-8 min-h-screen flex items-center justify-center">
+        <div className="flex flex-col items-center gap-5 p-10 rounded-2xl bg-card border border-border shadow-lg min-w-[300px] text-center">
+          <div className="h-12 w-12 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          <div>
+            <h2 className="text-lg font-semibold mb-1">Loading Data</h2>
+            <p className="text-sm text-muted-foreground">
+              {isAwaitingData && awaitingTotal
+                ? `Fetching all ${awaitingTotal.toLocaleString()} records…`
+                : "Loading spreadsheet data…"}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ---- Empty state ---- */
+  if (!data && rows.length === 0) {
+    return (
+      <div className="px-4 sm:px-8 py-8 min-h-screen">
+        <div className="p-10 rounded-2xl text-center bg-card border border-border">
+          <h1 className="text-2xl font-semibold mb-2">Sheets</h1>
+          <p className="text-muted-foreground">
+            Upload data first to open it as a spreadsheet.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="px-4 sm:px-8 py-6 min-h-screen flex flex-col">
@@ -826,7 +904,7 @@ export default function SheetsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Sheets</h1>
           <p className="text-sm text-muted-foreground">
-            {fileName || "Sheet"}{(isInitialLoading || loadProgress) ? "" : ` \u2014 ${rows.length.toLocaleString()} records`}
+            {fileName || "Sheet"} &mdash; {rows.length.toLocaleString()} records
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -862,8 +940,6 @@ export default function SheetsPage() {
             variant="outline"
             className="gap-2 text-destructive border-destructive/30 hover:bg-destructive/10"
             onClick={deleteSelected}
-            disabled={!!loadProgress}
-            title={loadProgress ? "Wait for all records to finish loading before deleting" : undefined}
           >
             <Trash2 className="h-4 w-4" /> Delete Selected
           </Button>
@@ -898,35 +974,8 @@ export default function SheetsPage() {
       </div>
 
       {/* AG Grid */}
+      <GridErrorBoundary>
       <div style={{ width: "100%", height: "calc(100vh - 240px)", position: "relative" }}>
-        {(isInitialLoading || loadProgress) && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-lg">
-            <div className="flex flex-col items-center gap-4 bg-card border border-border rounded-2xl px-8 py-8 shadow-lg min-w-[260px]">
-              <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-              <div className="text-center">
-                <p className="text-base font-semibold">Loading all records…</p>
-                {loadProgress && (
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {loadProgress.total.toLocaleString()} total rows
-                  </p>
-                )}
-              </div>
-              <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
-                {loadProgress && loadProgress.total > 0 && (
-                  <div
-                    className="bg-primary h-2 rounded-full transition-all duration-300"
-                    style={{
-                      width: `${Math.min(100, (loadProgress.loaded / loadProgress.total) * 100)}%`,
-                    }}
-                  />
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Please wait while your data is being loaded
-              </p>
-            </div>
-          </div>
-        )}
         {isDeleting && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm rounded-lg">
             <div className="flex flex-col items-center gap-3">
@@ -959,6 +1008,7 @@ export default function SheetsPage() {
           ensureDomOrder
         />
       </div>
+      </GridErrorBoundary>
 
       {/* Custom pagination footer */}
       <div className="mt-3 flex items-center justify-between text-sm text-muted-foreground">
