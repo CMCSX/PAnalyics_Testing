@@ -10,6 +10,7 @@ import React, {
 } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   login as apiLogin,
   getMe,
@@ -44,18 +45,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Load user from stored token on mount
   useEffect(() => {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+    const storedToken = localStorage.getItem(TOKEN_KEY);
+    if (!storedToken) {
       setIsLoading(false);
       if (pathname !== "/login") router.replace("/login");
       return;
     }
 
-    getMe(token)
-      .then(setUser)
+    getMe(storedToken)
+      .then((u) => {
+        setUser(u);
+        setIsLoading(false);
+      })
       .catch(async () => {
-        // Try refresh
+        // Access token expired — try refresh before giving up
         const refresh = localStorage.getItem(REFRESH_KEY);
         if (refresh) {
           try {
@@ -63,19 +66,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             localStorage.setItem(TOKEN_KEY, tokens.access_token);
             localStorage.setItem(REFRESH_KEY, tokens.refresh_token);
             setTokenState(tokens.access_token);
-            const u = await getMe(tokens.access_token);
-            setUser(u);
+            // getMe with new token — run in background, don't block isLoading.
+            // If it fails, user stays null but the app is still functional;
+            // the next authenticated request will re-attempt via the mount effect.
+            getMe(tokens.access_token).then(setUser).catch(() => {
+              // Non-critical — user profile will reload on next navigation
+            });
+            setIsLoading(false);
             return;
           } catch {
-            // refresh failed
+            // refresh failed — fall through to logout
           }
         }
         localStorage.removeItem(TOKEN_KEY);
         localStorage.removeItem(REFRESH_KEY);
         setTokenState(null);
-        if (pathname !== "/login") router.replace("/login");
-      })
-      .finally(() => setIsLoading(false));
+        setIsLoading(false);
+        if (pathname !== "/login") {
+          toast("Session expired", {
+            description: "Please log in again to continue.",
+            duration: 6000,
+          });
+          router.replace("/login");
+        }
+      });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const login = useCallback(
@@ -84,16 +98,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem(TOKEN_KEY, tokens.access_token);
       localStorage.setItem(REFRESH_KEY, tokens.refresh_token);
       setTokenState(tokens.access_token);
-      const u = await getMe(tokens.access_token);
-      setUser(u);
-      // Pre-warm the uploads list cache so the dashboard doesn't show a spinner
-      // immediately after login — the data is available before the route change.
-      queryClient.prefetchQuery({
-        queryKey: ["uploads", tokens.access_token],
-        queryFn: () => listUploads(tokens.access_token),
-        staleTime: 5 * 60 * 1000,
-      }).catch(() => { /* non-critical — silently ignore prefetch errors */ });
+
+      // Navigate immediately — don't wait for getMe or prefetch.
+      // getMe and the uploads prefetch run in parallel in the background
+      // so the dashboard data is ready (or nearly ready) by the time it renders.
       router.replace("/dashboard");
+
+      // Run both in parallel in the background. We intentionally do not await
+      // this Promise.all — navigation has already happened. The void operator
+      // makes the unhandled-promise lint rule happy.
+      void Promise.all([
+        getMe(tokens.access_token).then(setUser).catch(() => {
+          // getMe failed after login — token is valid (login succeeded) but
+          // profile fetch failed. Clear session and redirect back to login
+          // so the user isn't stuck on a dashboard with no user object.
+          localStorage.removeItem(TOKEN_KEY);
+          localStorage.removeItem(REFRESH_KEY);
+          setTokenState(null);
+          router.replace("/login");
+        }),
+        queryClient.prefetchQuery({
+          queryKey: ["uploads", tokens.access_token],
+          queryFn: () => listUploads(tokens.access_token),
+          staleTime: 5 * 60 * 1000,
+        }).catch(() => { /* non-critical */ }),
+      ]);
     },
     [router, queryClient]
   );
@@ -106,8 +135,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem("fileName");
     setTokenState(null);
     setUser(null);
+    // Wipe the entire query cache so the next user who logs in on this browser
+    // never sees the previous user's uploads, dashboard data, or audit log.
+    queryClient.clear();
     router.replace("/login");
-  }, [router]);
+  }, [router, queryClient]);
 
   const value = useMemo(
     () => ({

@@ -27,6 +27,11 @@ class User(Base):
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+    # Tracks the last time this user made an authenticated API request.
+    # Used by the inactivity cleanup job to purge upload sessions after 1 hour of inactivity.
+    last_activity_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
     def __repr__(self) -> str:
         return f"<User id={self.id} email={self.email}>"

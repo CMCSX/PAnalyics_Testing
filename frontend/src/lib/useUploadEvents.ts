@@ -14,7 +14,7 @@
 
 "use client";
 
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -138,7 +138,12 @@ export function useUploadEvents(token: string | null) {
     return () => {
       active = false;
       abortRef.current?.abort();
-      if (retryTimer.current) clearTimeout(retryTimer.current);
+      // Clear the retry timer so a pending reconnect from the old token
+      // doesn't fire after the new token's connection is already established.
+      if (retryTimer.current) {
+        clearTimeout(retryTimer.current);
+        retryTimer.current = null;
+      }
     };
   }, [token, queryClient]);
 

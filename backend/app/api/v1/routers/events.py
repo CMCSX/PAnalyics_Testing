@@ -20,15 +20,20 @@ from app.models.user import User
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
-# In-memory registry of connected client queues.
+# In-memory registry: maps user_id → set of that user's connected queues.
+# Scoping by user_id means:
+#   - new_upload / upload_progress events only go to the uploading user's clients
+#   - other users don't receive spurious cache-invalidation events or progress data
 # This works correctly for a single-process deployment (Uvicorn with 1 worker).
 # For multi-worker deployments, replace with Redis pub/sub.
-_subscribers: set[Queue] = set()
+_subscribers: dict[str, set[Queue]] = {}
 
 
-async def _stream(queue: Queue) -> AsyncGenerator[str, None]:
+async def _stream(user_id: str, queue: Queue) -> AsyncGenerator[str, None]:
     """Yield SSE-formatted lines from the queue; send keepalives every 25 s."""
-    _subscribers.add(queue)
+    if user_id not in _subscribers:
+        _subscribers[user_id] = set()
+    _subscribers[user_id].add(queue)
     try:
         while True:
             try:
@@ -38,25 +43,34 @@ async def _stream(queue: Queue) -> AsyncGenerator[str, None]:
                 # SSE comment — keeps the HTTP connection alive through proxies
                 yield ": keepalive\n\n"
     finally:
-        _subscribers.discard(queue)
+        if user_id in _subscribers:
+            _subscribers[user_id].discard(queue)
+            if not _subscribers[user_id]:
+                del _subscribers[user_id]
 
 
-async def broadcast_new_upload(session_id: str, file_name: str) -> None:
+async def broadcast_new_upload(session_id: str, file_name: str, user_id: str) -> None:
     """
     Call this after a new UploadSession is persisted.
-    Pushes a 'new_upload' event to every connected SSE client.
+    Pushes a 'new_upload' event only to the uploading user's connected SSE clients.
     """
+    queues = _subscribers.get(user_id)
+    if not queues:
+        return
     payload = json.dumps(
         {"type": "new_upload", "session_id": session_id, "file_name": file_name}
     )
-    for q in list(_subscribers):
+    for q in list(queues):
         await q.put(payload)
 
 
 async def broadcast_upload_progress(
-    session_id: str, file_name: str, processed: int, total: int
+    session_id: str, file_name: str, processed: int, total: int, user_id: str = ""
 ) -> None:
-    """Push upload progress to SSE clients (called during batch inserts)."""
+    """Push upload progress only to the uploading user's SSE clients."""
+    queues = _subscribers.get(user_id)
+    if not queues:
+        return
     payload = json.dumps(
         {
             "type": "upload_progress",
@@ -66,13 +80,13 @@ async def broadcast_upload_progress(
             "total": total,
         }
     )
-    for q in list(_subscribers):
+    for q in list(queues):
         await q.put(payload)
 
 
 @router.get("/stream")
 async def event_stream(
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     """
     SSE stream that pushes upload-lifecycle events to authenticated clients.
@@ -84,7 +98,7 @@ async def event_stream(
     """
     queue: Queue = asyncio.Queue()
     return StreamingResponse(
-        _stream(queue),
+        _stream(current_user.id, queue),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -79,7 +79,7 @@ export function Sidebar() {
               <Link
                 key={item.path}
                 href={item.path}
-                onClick={() => { setIsOpen(false); setCollapsed(true); }}
+                onClick={() => setIsOpen(false)}
                 title={collapsed ? item.label : undefined}
                 className={`${collapsed ? "mb-4 justify-center px-2" : "mb-2"} flex items-center gap-3 rounded-full px-4 py-3 transition-all duration-[250ms] ease-[cubic-bezier(0.2,0,0,1)] ${
                   active
@@ -113,7 +113,7 @@ export function Sidebar() {
               </div>
               <Link
                 href="/settings"
-                onClick={() => { setIsOpen(false); setCollapsed(true); }}
+                onClick={() => setIsOpen(false)}
                 className={`rounded-full p-2 transition-all duration-[200ms] ease-[cubic-bezier(0.2,0,0,1)] ${
                   isActive("/settings")
                     ? "bg-primary text-primary-foreground shadow-md"
@@ -132,7 +132,7 @@ export function Sidebar() {
               </div>
               <Link
                 href="/settings"
-                onClick={() => { setIsOpen(false); setCollapsed(true); }}
+                onClick={() => setIsOpen(false)}
                 className={`rounded-full p-2 transition-all duration-[200ms] ease-[cubic-bezier(0.2,0,0,1)] ${
                   isActive("/settings")
                     ? "bg-primary text-primary-foreground shadow-md"

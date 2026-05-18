@@ -47,7 +47,7 @@ export default function AccountsPage() {
     useApiPath ? sessionId : null,
     sessionValidated,
     {
-      search: debouncedSearch || undefined,
+      search: debouncedSearch?.trim() || undefined,
       date_from: dateBounds.date_from,
       date_to: dateBounds.date_to,
       page: currentPage,
@@ -103,6 +103,12 @@ export default function AccountsPage() {
 
   const totalPages = Math.max(1, Math.ceil(totalAccounts / PAGE_SIZE));
   const start = (currentPage - 1) * PAGE_SIZE;
+
+  // If the current page is beyond the new total (e.g. search narrowed results),
+  // snap back to the last valid page.
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [totalPages, currentPage]);
 
   const isLoading = useApiPath ? summaryLoading : false;
 

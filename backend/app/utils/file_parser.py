@@ -53,22 +53,37 @@ def _format_date(value: object) -> str:
     
     s = str(value).strip()
     
-    # Try to parse common date formats
-    # Format: MM/DD/YYYY or M/D/YYYY (e.g., "01/12/2026" or "1/12/2026")
+    # Already in YYYY-MM-DD format — check first to avoid misparse
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return s
+
+    # Slash-separated: could be MM/DD/YYYY (US) or DD/MM/YYYY (PH).
+    # Philippine convention is DD/MM/YYYY.  We use DD/MM/YYYY here.
+    # If the day part > 12 it must be DD/MM; if month part > 12 it must be MM/DD.
+    # When both parts are ≤ 12 we default to DD/MM (Philippine locale).
     if "/" in s:
         try:
             parts = s.split("/")
             if len(parts) == 3:
-                month, day, year = parts
-                # Handle 2-digit or 4-digit year
+                p1, p2, year = parts
                 if len(year) == 2:
                     year = "20" + year
-                dt = datetime(int(year), int(month), int(day))
+                n1, n2 = int(p1), int(p2)
+                # If first part > 12 it must be DD/MM/YYYY
+                # If second part > 12 it must be MM/DD/YYYY
+                # Otherwise default to DD/MM/YYYY (Philippine convention)
+                if n1 > 12:
+                    day, month = n1, n2   # DD/MM/YYYY
+                elif n2 > 12:
+                    month, day = n1, n2   # MM/DD/YYYY
+                else:
+                    day, month = n1, n2   # default DD/MM/YYYY
+                dt = datetime(int(year), month, day)
                 return dt.strftime("%Y-%m-%d")
         except (ValueError, IndexError):
             pass
     
-    # Format: DD-MM-YYYY or D-M-YYYY
+    # Format: DD-MM-YYYY or D-M-YYYY (hyphen-separated, not ISO)
     if "-" in s and not re.match(r"^\d{4}-\d{2}-\d{2}$", s):
         try:
             parts = s.split("-")
@@ -90,10 +105,6 @@ def _format_date(value: object) -> str:
             epoch = datetime(1899, 12, 30)
             dt = epoch + timedelta(days=num)
             return dt.strftime("%Y-%m-%d")
-    
-    # Already in YYYY-MM-DD format
-    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
-        return s
     
     # If all parsing fails, return the original string
     return s

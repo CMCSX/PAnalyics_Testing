@@ -61,11 +61,18 @@ async def create_upload(
         )
     repo = UploadRepository(db)
     audit_repo = AuditLogRepository(db)
+
+    # Wrap the progress callback to capture the current user's ID so SSE
+    # events are only sent to this user's connected clients.
+    uid = current_user.id
+    async def _progress(sid: str, fname: str, processed: int, total: int) -> None:
+        await broadcast_upload_progress(sid, fname, processed, total, user_id=uid)
+
     session = await repo.create_session(
         user_id=current_user.id,
         file_name=payload.file_name,
         records=payload.records,
-        on_progress=broadcast_upload_progress,
+        on_progress=_progress,
     )
     await audit_repo.log_action(
         user_id=current_user.id,
@@ -75,8 +82,8 @@ async def create_upload(
         record_count=session.total_records,
         total_amount=session.total_amount,
     )
-    # Notify all SSE-connected clients so their uploads list auto-refreshes
-    await broadcast_new_upload(session.id, session.file_name)
+    # Notify only this user's SSE clients
+    await broadcast_new_upload(session.id, session.file_name, user_id=current_user.id)
     return UploadSessionOut.model_validate(session)
 
 
@@ -123,13 +130,19 @@ async def upload_file(
 
     repo = UploadRepository(db)
     audit_repo = AuditLogRepository(db)
+
+    # Wrap progress callback to scope SSE events to this user only
+    uid = current_user.id
+    async def _progress(sid: str, fname: str, processed: int, total: int) -> None:
+        await broadcast_upload_progress(sid, fname, processed, total, user_id=uid)
+
     try:
         session = await repo.create_session_streaming(
             user_id=current_user.id,
             file_name=file_name,
             records=record_stream,
             max_records=MAX_RECORDS_PER_FILE_UPLOAD,
-            on_progress=broadcast_upload_progress,
+            on_progress=_progress,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
@@ -148,7 +161,7 @@ async def upload_file(
         record_count=session.total_records,
         total_amount=session.total_amount,
     )
-    await broadcast_new_upload(session.id, session.file_name)
+    await broadcast_new_upload(session.id, session.file_name, user_id=current_user.id)
     return UploadSessionOut.model_validate(session)
 
 
@@ -418,7 +431,9 @@ async def get_dashboard(
     db: AsyncSession = Depends(get_db),
 ) -> DashboardSummary:
     """Get aggregated KPI summary for an upload session (cached 5 min)."""
-    cache_key = f"dashboard:{session_id}:{date_from or ''}:{date_to or ''}"
+    # Include user_id in the cache key so one user can never read another
+    # user's cached dashboard data even if they somehow know the session_id.
+    cache_key = f"dashboard:{current_user.id}:{session_id}:{date_from or ''}:{date_to or ''}"
     cached = cache_get(cache_key)
     if cached is not None:
         return DashboardSummary(**cached)
@@ -785,7 +800,9 @@ async def delete_transactions_by_date_range(
         )
 
     cache_invalidate(f"dashboard:{session_id}")
-    return {"deleted": count}
+    # Check if the session was auto-deleted by _update_session_totals (all records gone)
+    session_still_exists = await repo.get_session_metadata(session_id, current_user.id)
+    return {"deleted": count, "session_deleted": session_still_exists is None}
 
 
 @router.post("/audit", status_code=status.HTTP_201_CREATED)
@@ -969,8 +986,25 @@ async def undo_audit_entry(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record no longer exists — cannot undo update.")
 
     elif entry.action == "record_bulk_delete":
-        # Restore bulk deleted records (preserve original IDs where available)
+        # Restore bulk deleted records (preserve original IDs where available).
+        # Date-range bulk deletes store only metadata (date_from/date_to) in the
+        # snapshot — not individual records — so undo is not possible for those.
         records_data = snapshot.get("records", [])
+        if not records_data:
+            # Check if this was a date-range delete (has date_from/date_to keys)
+            if snapshot.get("date_from") or snapshot.get("date_to"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Undo is not available for date-range bulk deletes — "
+                        "individual record snapshots are not stored for this operation."
+                    ),
+                )
+            # Empty records list for a non-date-range delete — nothing to restore
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No records found in snapshot — undo is not available for this entry.",
+            )
         session_id = snapshot.get("session_id", entry.session_id)
         for rec in records_data:
             orig_id = rec.get("id")

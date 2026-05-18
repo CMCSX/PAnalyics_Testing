@@ -76,7 +76,9 @@ export default function ReportsPage() {
     }));
   }, [data]);
 
-  // Fetch ALL records from backend in a single request (dedicated export endpoint)
+  // Fetch ALL records from backend for export.
+  // Uses the streaming CSV endpoint for CSV format (safe for any size),
+  // and the JSON export endpoint for Excel/JSON (capped at 500k records).
   const fetchAllForExport = async (): Promise<{ Bank: string; "Payment Date": string; "Payment Amount": number; Account: string; Touchpoint: string }[]> => {
     if (!token || !sessionId) return reportData;
     const allItems = await exportAllRecords(token, sessionId);
@@ -92,6 +94,17 @@ export default function ReportsPage() {
   const handleExport = async (format: "excel" | "csv" | "json") => {
     setExporting(true);
     try {
+      // For CSV with a backend session, use the server-side streaming endpoint —
+      // it's memory-safe for any dataset size and bypasses the 500k record cap.
+      if (format === "csv" && sessionId && token) {
+        await import("@/lib/api").then(({ downloadAllRecordsCSV }) =>
+          downloadAllRecordsCSV(token, sessionId, fileName || "payanalytics_report")
+        );
+        toast.success("CSV download started.");
+        setExporting(false);
+        return;
+      }
+
       let exportData: DataRow[];
       if (sessionId && token) {
         toast.info("Fetching all records from server...");
@@ -105,7 +118,7 @@ export default function ReportsPage() {
         return;
       }
 
-      const fileName = `payanalytics_report_${new Date().toISOString().split("T")[0]}`;
+      const exportFileName = `payanalytics_report_${new Date().toISOString().split("T")[0]}`;
       const exportOpts: ExportOptions = {
         fields: Array.from(selectedFields),
         includeSummary,
@@ -117,13 +130,13 @@ export default function ReportsPage() {
       };
 
       if (format === "excel") {
-        await exportToExcel(exportData, fileName, exportOpts);
+        await exportToExcel(exportData, exportFileName, exportOpts);
         toast.success(`Exported ${fmt(exportData.length)} records to Excel${includeSummary ? " with summary" : ""}`);
       } else if (format === "csv") {
-        exportToCSV(exportData, fileName, exportOpts);
+        exportToCSV(exportData, exportFileName, exportOpts);
         toast.success(`Exported ${fmt(exportData.length)} records to CSV`);
       } else {
-        exportToJSON(exportData, fileName, exportOpts);
+        exportToJSON(exportData, exportFileName, exportOpts);
         toast.success(`Exported ${fmt(exportData.length)} records to JSON`);
       }
     } catch {

@@ -47,18 +47,20 @@ export default function UploadPage() {
   const { token } = useAuth();
   const queryClient = useQueryClient();
 
-  // Smooth progress animation: gradually fill toward the next checkpoint
+  // Smooth progress animation: fill to 40% during parsing, then hold at 40%
+  // during the saving phase. The circle switches to a spinner animation while
+  // waiting for the server so it never looks frozen or goes backwards.
   useEffect(() => {
     if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-    if (!uploading || uploadPhase === "done") return;
+    if (!uploading || uploadPhase === "done" || uploadPhase === "saving") return;
 
-    const target = uploadPhase === "parsing" ? 48 : 95;
+    // Only animate during "parsing" — ramp up to 40%
+    const target = 40;
     progressTimerRef.current = setInterval(() => {
       setUploadProgress((prev) => {
         if (prev >= target) return prev;
-        // Slow down as we approach the target (logarithmic ease)
         const remaining = target - prev;
-        const increment = Math.max(0.3, remaining * 0.04);
+        const increment = Math.max(0.3, remaining * 0.06);
         return Math.min(prev + increment, target);
       });
     }, 200);
@@ -331,60 +333,52 @@ export default function UploadPage() {
     setError(null);
     setUploadSuccess(false);
 
-    // Always use server-side streaming — the backend handles all file sizes safely.
-    // Client-side parsing is only used for in-memory preview, not for saving to DB.
-    const LARGE_FILE_THRESHOLD = 0; // All uploads go through the streaming endpoint
-    const usesServerStreaming = file.size > LARGE_FILE_THRESHOLD;
+    // Abort controller so we can cancel the upload on timeout
+    const abortController = new AbortController();
+    // 5-minute hard timeout — large files on Render free tier can be slow,
+    // but anything beyond 5 min is almost certainly a stalled connection.
+    const UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+    const timeoutId = setTimeout(() => {
+      abortController.abort();
+    }, UPLOAD_TIMEOUT_MS);
 
     try {
-      let saved: UploadSessionOut;
+      // Server-side streaming path: send raw file, backend parses row-by-row
+      setUploadProgress(20);
+      setUploadPhase("saving");
 
-      if (usesServerStreaming) {
-        // Server-side streaming path: send raw file, backend parses row-by-row
-        setUploadProgress(20);
-        setUploadPhase("saving");
-        saved = await uploadFile(token, file);
-        setUploadProgress(100);
-        setUploadPhase("done");
-        setSessionId(saved.id);
-        setFileName(file.name);
-        // No in-memory data for large files — dashboard fetches from API
-        setData(null);
-        setRawData([]);
-      } else {
-        // Client-side path for smaller files (fast, supports in-memory filters)
-        setUploadProgress(10);
-        const parsedData = await parseExcelFile(file);
-        setUploadProgress(50);
-        setUploadPhase("saving");
-        const records = parsedData.payments.map((p) => ({
-          bank: p.bank || "Unknown",
-          account: p.account || "",
-          touchpoint: p.touchpoint || "NO TOUCHPOINT",
-          payment_date: p.paymentDate || undefined,
-          payment_amount: Number.isFinite(p.paymentAmount) ? p.paymentAmount : 0,
-          environment: p.environment || undefined,
-        }));
-        setUploadProgress(60);
-        saved = await saveUpload(token, { file_name: file.name, records });
-        setUploadProgress(100);
-        setUploadPhase("done");
-        setSessionId(saved.id);
-        setFileName(file.name);
-        setData(parsedData);
-        setRawData(parsedData.raw);
-      }
+      const saved = await uploadFile(token, file, abortController.signal);
+
+      // Jump straight to 100% and show "Done!" before navigating
+      setUploadProgress(100);
+      setUploadPhase("done");
+      setSessionId(saved.id);
+      setFileName(file.name);
+      // No in-memory data — dashboard fetches from API
+      setData(null);
+      setRawData([]);
 
       await queryClient.invalidateQueries({ queryKey: ["uploads"] });
       toast.success(`Uploaded! ${saved.total_records.toLocaleString()} records saved.`);
       setUploadSuccess(true);
+
+      // Brief pause so the user sees "Done!" before the page changes
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      setUploading(false);
       router.push("/dashboard");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Upload failed";
+      const isAbort = err instanceof Error && err.name === "AbortError";
+      const message = isAbort
+        ? `Upload timed out after ${UPLOAD_TIMEOUT_MS / 60000} minutes. The file may be too large or the server is under load — please try again.`
+        : err instanceof Error
+        ? err.message
+        : "Upload failed";
       setError(message);
-      toast.error("Upload failed");
-    } finally {
+      toast.error(isAbort ? "Upload timed out" : "Upload failed");
       setUploading(false);
+    } finally {
+      // Always clear the timeout — prevents a 5-min delayed abort on an already-finished upload
+      clearTimeout(timeoutId);
     }
   };
 
@@ -695,30 +689,54 @@ export default function UploadPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl p-10 flex flex-col items-center gap-6 min-w-[260px]">
             <div className="relative w-28 h-28">
-              <svg className="w-full h-full -rotate-90" viewBox="0 0 96 96">
-                {/* Background track */}
-                <circle
-                  cx="48" cy="48" r={circleRadius}
-                  fill="none"
-                  stroke="#e2e8f0"
-                  strokeWidth="8"
-                  className="dark:stroke-gray-700"
-                />
-                {/* Progress arc */}
-                <circle
-                  cx="48" cy="48" r={circleRadius}
-                  fill="none"
-                  stroke="#4a55d1"
-                  strokeWidth="8"
-                  strokeLinecap="round"
-                  strokeDasharray={circleCircumference}
-                  strokeDashoffset={circleCircumference * (1 - uploadProgress / 100)}
-                  className="transition-all duration-700 ease-out"
-                />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-xl font-bold text-[#4a55d1]">{Math.round(uploadProgress)}%</span>
-              </div>
+              {uploadPhase === "saving" ? (
+                /* Indeterminate spinner — no percentage, just a rotating arc */
+                <svg className="w-full h-full animate-spin" viewBox="0 0 96 96">
+                  <circle
+                    cx="48" cy="48" r={circleRadius}
+                    fill="none"
+                    stroke="#e2e8f0"
+                    strokeWidth="8"
+                    className="dark:stroke-gray-700"
+                  />
+                  <circle
+                    cx="48" cy="48" r={circleRadius}
+                    fill="none"
+                    stroke="#4a55d1"
+                    strokeWidth="8"
+                    strokeLinecap="round"
+                    strokeDasharray={circleCircumference}
+                    strokeDashoffset={circleCircumference * 0.75}
+                  />
+                </svg>
+              ) : (
+                /* Determinate progress arc for parsing + done phases */
+                <svg className="w-full h-full -rotate-90" viewBox="0 0 96 96">
+                  <circle
+                    cx="48" cy="48" r={circleRadius}
+                    fill="none"
+                    stroke="#e2e8f0"
+                    strokeWidth="8"
+                    className="dark:stroke-gray-700"
+                  />
+                  <circle
+                    cx="48" cy="48" r={circleRadius}
+                    fill="none"
+                    stroke="#4a55d1"
+                    strokeWidth="8"
+                    strokeLinecap="round"
+                    strokeDasharray={circleCircumference}
+                    strokeDashoffset={circleCircumference * (1 - uploadProgress / 100)}
+                    className="transition-all duration-700 ease-out"
+                  />
+                </svg>
+              )}
+              {/* Only show percentage when not in the indeterminate spinner phase */}
+              {uploadPhase !== "saving" && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-xl font-bold text-[#4a55d1]">{Math.round(uploadProgress)}%</span>
+                </div>
+              )}
             </div>
             <div className="text-center">
               <p className="text-base font-semibold text-gray-900 dark:text-white">
@@ -728,11 +746,12 @@ export default function UploadPage() {
               </p>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                 {uploadPhase === "parsing" && "Parsing your data"}
+                {uploadPhase === "saving" && "Server is processing rows..."}
                 {uploadPhase === "done" && "Upload complete"}
               </p>
               {(uploadPhase === "parsing" || uploadPhase === "saving") && (
                 <p className="text-xs text-gray-400 dark:text-gray-500 mt-2 max-w-[200px]">
-                  Large files may take a little longer to upload
+                  Large files may take 1–2 minutes — please keep this tab open
                 </p>
               )}
             </div>

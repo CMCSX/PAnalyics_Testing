@@ -356,6 +356,7 @@ export function exportToPDF(
   // Clone the element to avoid XSS instead of using innerHTML
   const clonedContent = element.cloneNode(true);
   printWindow.document.body.appendChild(clonedContent);
+  printWindow.document.close(); // signal to browser that document is ready
   printWindow.print();
 }
 

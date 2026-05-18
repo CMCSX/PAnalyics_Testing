@@ -705,8 +705,11 @@ class UploadRepository:
             for row in tp_rows.all()
         ]
 
-        # Combined query: env, bank, touchpoint, payment_date in one pass
-        # (replaces separate dates, environments, and env_bank_tp queries)
+        # Combined query: env, bank, touchpoint, payment_date in one pass.
+        # Environment/bank/touchpoint metadata is fetched WITHOUT date_conditions
+        # so filter dropdowns always show all available options in the dataset.
+        # The dates list IS filtered by date_conditions so it only shows dates
+        # within the selected range.
         combo_rows = await self.session.execute(
             select(
                 PaymentRecord.environment,
@@ -718,10 +721,17 @@ class UploadRepository:
             .distinct()
             .order_by(PaymentRecord.environment, PaymentRecord.bank, PaymentRecord.touchpoint, PaymentRecord.payment_date)
         )
+        # Fetch dates separately with date_conditions applied so the dates list
+        # reflects only the currently selected date range.
+        dates_rows = await self.session.execute(
+            select(PaymentRecord.payment_date)
+            .where(PaymentRecord.session_id == session_id, *date_conditions)
+            .where(PaymentRecord.payment_date.isnot(None))
+            .distinct()
+        )
         env_map_build: dict[str, dict[str, set[str]]] = {}
-        dates_set: set[str] = set()
         environments_set: set[str] = set()
-        for env, bank, touchpoint, payment_date in combo_rows.all():
+        for env, bank, touchpoint, _payment_date in combo_rows.all():
             if env is not None:
                 environments_set.add(env)
                 if env not in env_map_build:
@@ -730,6 +740,9 @@ class UploadRepository:
                     env_map_build[env][bank] = set()
                 if touchpoint:
                     env_map_build[env][bank].add(touchpoint)
+        # Build dates list from the date-filtered query
+        dates_set: set[str] = set()
+        for (payment_date,) in dates_rows.all():
             if payment_date:
                 dates_set.add(payment_date)
         dates = sorted(dates_set)

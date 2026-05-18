@@ -15,9 +15,10 @@ env/
 
 # Environment variables (NEVER commit)
 .env
+env
 
-# Alembic
-alembic/versions/*.py
+# Alembic — keep version files tracked
+# alembic/versions/*.py  ← intentionally not ignored
 
 # IDE
 .idea/

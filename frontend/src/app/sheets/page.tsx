@@ -230,8 +230,12 @@ export default function SheetsPage() {
   /* ---- undo/redo stacks ---- */
   const undoStack = useRef<SheetRow[][]>([]);
   const redoStack = useRef<SheetRow[][]>([]);
+  const MAX_UNDO = 50; // cap memory: 50 snapshots × ~rows × ~200 bytes each
   const pushUndo = (snapshot: SheetRow[]) => {
     undoStack.current.push(snapshot.map((r) => ({ ...r })));
+    if (undoStack.current.length > MAX_UNDO) {
+      undoStack.current.shift(); // drop the oldest entry
+    }
     redoStack.current = [];
   };
 
@@ -581,8 +585,31 @@ export default function SheetsPage() {
 
       // Persist to backend
       const id = rowData.id;
-      if (token && sessionId && id) {
-        (async () => {
+      if (token && sessionId && !id) {
+        // New row with no backend ID yet — create it on first edit if the
+        // minimum required fields are present (bank + account).
+        if (rowData.bank && rowData.account) {
+          (async () => {
+            try {
+              const rec = await createTransaction(token, sessionId, {
+                bank: rowData.bank,
+                account: rowData.account,
+                touchpoint: rowData.touchpoint || undefined,
+                payment_date: rowData.paymentDate || undefined,
+                payment_amount: rowData.paymentAmount || 0,
+                environment: rowData.environment || undefined,
+              });
+              // Patch the row with the real backend ID so future edits use updateTransaction
+              setRows((prev) =>
+                prev.map((r) => (r === rowData ? { ...r, id: rec.id } : r))
+              );
+              invalidateAll();
+            } catch (err) {
+              toast.error(`Failed to save new row: ${err instanceof Error ? err.message : "Network error"}`);
+            }
+          })();
+        }
+      } else if (token && sessionId && id) {        (async () => {
           try {
             await updateTransaction(token, sessionId, id, {
               bank: rowData.bank,
@@ -610,8 +637,21 @@ export default function SheetsPage() {
               // best-effort audit
             }
             invalidateAll();
-          } catch {
-            // ignore
+          } catch (err) {
+            // Save failed — revert the cell to its previous value so the UI
+            // stays in sync with the database.
+            toast.error(`Save failed: ${err instanceof Error ? err.message : "Network error"}. Change reverted.`);
+            // Use functional update to avoid stale closure over `rows` —
+            // the user may have made additional edits while this save was in-flight.
+            setRows((currentRows) => {
+              const reverted = currentRows.map((r) =>
+                r === rowData ? { ...rowData, [field]: oldValue } : r
+              );
+              // syncToContext inside the functional updater so it always
+              // receives the same array that setRows will commit.
+              syncToContext(reverted);
+              return reverted;
+            });
           }
         })();
       } else {
@@ -669,59 +709,12 @@ export default function SheetsPage() {
     const newRows = [tempRow, ...rows];
     setRows(newRows);
     syncToContext(newRows);
-
-    if (token && sessionId) {
-      (async () => {
-        try {
-          const rec = await createTransaction(token, sessionId, {
-            bank: emptyRow.bank,
-            account: emptyRow.account,
-            touchpoint: emptyRow.touchpoint || undefined,
-            payment_date: emptyRow.paymentDate || undefined,
-            payment_amount: emptyRow.paymentAmount,
-            environment: emptyRow.environment || undefined,
-          });
-          setRows((prev) => {
-            const copy = [...prev];
-            const idx = copy.indexOf(tempRow);
-            if (idx !== -1) {
-              copy[idx] = {
-                id: rec.id,
-                bank: rec.bank,
-                paymentDate: rec.payment_date ?? "",
-                paymentAmount: rec.payment_amount,
-                account: rec.account,
-                touchpoint: rec.touchpoint ?? "",
-                environment: rec.environment ?? "",
-              };
-            }
-            return copy;
-          });
-          try {
-            await createAuditLog(token, {
-              action: "record_create",
-              file_name: fileName || "uploaded",
-              session_id: sessionId,
-              record_count: 1,
-              details: `Created record ${rec.id}`,
-              snapshot_data: JSON.stringify({
-                session_id: sessionId,
-                record: rec,
-              }),
-            });
-          } catch {}
-          toast.success("Row added and saved.");
-          invalidateAll();
-        } catch {
-          toast.success("Row added (local).");
-          invalidateAll();
-        }
-      })();
-    } else {
-      toast.success("Row added.");
-      invalidateAll();
-    }
-  }, [rows, token, sessionId, fileName, syncToContext, invalidateAll]);
+    // Don't create a backend record yet — wait until the user fills in the row
+    // and triggers onCellValueChanged. Creating an empty record immediately
+    // would persist junk data (bank="", account="", amount=0) to the database.
+    toast.success("Row added — fill in the fields and they will save automatically.");
+    invalidateAll();
+  }, [rows, syncToContext, invalidateAll]);
 
   /* ---- Delete selected rows ---- */
   const deleteSelected = useCallback(() => {
@@ -786,13 +779,18 @@ export default function SheetsPage() {
               toast.success(`${count} row${count > 1 ? "s" : ""} deleted.`);
               invalidateAll();
 
-              // If all records are deleted, the backend will have auto-deleted
-              // the session. Clear context + localStorage and send user to upload.
+              // If all records are deleted, _update_session_totals on the backend
+              // already auto-deleted the session via CASCADE. Just clear local state.
               if (newRows.length === 0) {
                 setData(null);
                 setSessionId(null);
                 setFileName("");
-                queryClient.clear();
+                // Invalidate specific queries rather than nuking the entire cache
+                // (queryClient.clear() would wipe auth state and force full reloads)
+                queryClient.invalidateQueries({ queryKey: ["uploads"] });
+                queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+                queryClient.invalidateQueries({ queryKey: ["transactions"] });
+                queryClient.invalidateQueries({ queryKey: ["upload-records"] });
                 toast.info("All records deleted. Please upload a new file.");
                 router.push("/upload");
               }

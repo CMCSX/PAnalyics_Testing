@@ -52,12 +52,14 @@ export function useDashboard(token: string | null, sessionId: string | null, ses
     queryKey: queryKeys.dashboard(token!, sessionId!, dateFrom, dateTo),
     queryFn: () => getDashboardSummary(token!, sessionId!, { date_from: dateFrom, date_to: dateTo }),
     enabled: !!token && !!sessionId && sessionValidated,
-    staleTime: 5 * 60 * 1000,    // 5 min — mark stale after 5 min
-    gcTime: 30 * 60 * 1000,      // 30 min — keep in memory
-    refetchOnWindowFocus: false,  // don't refetch when user switches browser tabs
-    refetchOnMount: false,        // don't refetch if data already in cache
-    refetchInterval: 5 * 60 * 1000, // auto-refresh every 5 min in background
-    placeholderData: keepPreviousData,  // keep showing old data while re-fetching
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    // No refetchInterval — the dashboard is event-driven (SSE invalidates on new upload).
+    // Auto-polling every 5 min was causing 401/404 bursts during token refresh and
+    // after the inactivity purge deletes the session.
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -84,7 +86,7 @@ export function useTransactions(
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
-    refetchInterval: 5 * 60 * 1000, // auto-refresh every 5 min
+    // Removed refetchInterval — same reason as useDashboard (401/404 burst loops)
     placeholderData: keepPreviousData,
   });
 }
@@ -120,7 +122,8 @@ export function useUploadRecords(token: string | null, sessionId: string | null,
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
-    refetchOnMount: false,
+    // refetchOnMount: true (default) so navigating back to Sheets always gets
+    // fresh data if the cache is stale — prevents showing pre-edit state.
   });
 }
 

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Sun, Moon } from "lucide-react";
 import { useTheme } from "next-themes";
+import Image from "next/image";
 import { useData } from "@/context/DataContext";
 
 export function TopBar() {
@@ -19,7 +20,7 @@ export function TopBar() {
     <header className="sticky top-0 z-[60] flex h-16 items-center justify-between border-b bg-white/80 dark:bg-[rgba(7,13,18,0.80)] backdrop-blur-xl border-border/40 dark:border-white/6 px-4 sm:px-6">
       {/* Left: logo + file name */}
       <div className="flex items-center gap-6">
-        <img src="/SVG Lgo.svg" alt="Logo" className="h-7 w-auto flex-shrink-0" />
+        <Image src="/SVG Lgo.svg" alt="Logo" width={120} height={28} className="h-7 w-auto flex-shrink-0" priority />
         {fileName && (
           <span className="hidden sm:inline text-sm text-muted-foreground truncate max-w-[500px]">
             {fileName}

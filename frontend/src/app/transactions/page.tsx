@@ -61,7 +61,7 @@ export default function TransactionsPage() {
     environment: envFilter !== "all" ? envFilter : undefined,
     date_from: dateBounds.date_from,
     date_to: dateBounds.date_to,
-    search: debouncedSearch || undefined,
+    search: debouncedSearch?.trim() || undefined,
     page: currentPage,
     page_size: rowsPerPage,
   };
@@ -71,6 +71,12 @@ export default function TransactionsPage() {
   useEffect(() => {
     if (txError && (txError.message.includes("404") || txError.message.includes("Not Found") || txError.message.includes("500") || txError.message.includes("Internal Server Error"))) {
       setSessionId(null);
+      if (txError.message.includes("404") || txError.message.includes("Not Found")) {
+        toast("Session expired", {
+          description: "Your uploaded data was cleared after 1 hour of inactivity. Please upload a new file.",
+          duration: 8000,
+        });
+      }
     }
   }, [txError, setSessionId]);
 
@@ -505,6 +511,10 @@ export default function TransactionsPage() {
 
   const handleMassDelete = async () => {
     if (!massDeleteFrom || !massDeleteTo) return;
+    if (massDeleteFrom > massDeleteTo) {
+      toast.error("'From' date must not be later than 'To' date.");
+      return;
+    }
 
     if (usingApi && token && sessionId) {
       // API mode: delete from backend
@@ -515,10 +525,13 @@ export default function TransactionsPage() {
         queryClient.invalidateQueries({ queryKey: ["dashboard"] });
         queryClient.invalidateQueries({ queryKey: ["uploads"] });
 
-        // Check if all records were deleted — if so, remove the session entirely
+        // The backend returns session_deleted=true when _update_session_totals
+        // auto-deleted the session because all records were removed.
+        // Use that flag instead of the unreliable (displayTotal - result.deleted) check.
+        const sessionGone = (result as { deleted: number; session_deleted?: boolean }).session_deleted;
         const remaining = displayTotal - result.deleted;
-        if (remaining <= 0) {
-          await deleteUpload(token, sessionId);
+        if (sessionGone || remaining <= 0) {
+          // Session already gone on the backend — don't call deleteUpload (would 404)
           setSessionId(null);
           setData(null);
           queryClient.invalidateQueries({ queryKey: ["uploads"] });

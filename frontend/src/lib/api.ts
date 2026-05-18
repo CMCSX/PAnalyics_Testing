@@ -510,7 +510,8 @@ export function createAuditLog(token: string, payload: AuditLogCreate) {
  */
 export async function uploadFile(
   token: string,
-  file: File
+  file: File,
+  signal?: AbortSignal,
 ): Promise<UploadSessionOut> {
   const formData = new FormData();
   formData.append("file", file);
@@ -519,5 +520,6 @@ export async function uploadFile(
     method: "POST",
     token,
     body: formData,
+    signal,
   });
 }

@@ -49,7 +49,6 @@ const COLORS = [
 ];
 
 const BRAND = "#5B66E2";
-const BRAND_SECONDARY = "#4a55d1";
 
 const tooltipStyle = {
   backgroundColor: "#1e293b",

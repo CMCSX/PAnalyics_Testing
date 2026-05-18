@@ -7,12 +7,12 @@ import {
   TouchpointAnalytics,
 } from "@/types/data";
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB — matches the backend /file endpoint limit
 const ALLOWED_EXTENSIONS = [".xlsx", ".xls", ".csv"];
 
 function validateFile(file: File): void {
   if (file.size > MAX_FILE_SIZE) {
-    throw new Error("File size exceeds 10MB limit.");
+    throw new Error("File size exceeds 50MB limit.");
   }
   const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
   if (!ALLOWED_EXTENSIONS.includes(ext)) {
@@ -52,10 +52,23 @@ function formatDate(value: unknown): string {
   }
   if (typeof value === "string" && value.trim()) {
     const s = value.trim();
-    // MM/DD/YYYY → YYYY-MM-DD
-    const mdyMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (mdyMatch) {
-      const [, mm, dd, yyyy] = mdyMatch;
+    // Already YYYY-MM-DD — check first
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    // Slash-separated: DD/MM/YYYY (Philippine convention) or MM/DD/YYYY (US).
+    // If first part > 12 → must be DD/MM; if second part > 12 → must be MM/DD.
+    // When both ≤ 12, default to DD/MM (Philippine locale).
+    const slashMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (slashMatch) {
+      const [, p1, p2, yyyy] = slashMatch;
+      const n1 = parseInt(p1, 10), n2 = parseInt(p2, 10);
+      let dd: string, mm: string;
+      if (n1 > 12) {
+        dd = p1; mm = p2;          // DD/MM/YYYY
+      } else if (n2 > 12) {
+        mm = p1; dd = p2;          // MM/DD/YYYY
+      } else {
+        dd = p1; mm = p2;          // default DD/MM/YYYY
+      }
       return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
     }
     // DD-MM-YYYY → YYYY-MM-DD
@@ -64,8 +77,6 @@ function formatDate(value: unknown): string {
       const [, dd, mm, yyyy] = dmyMatch;
       return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
     }
-    // Already YYYY-MM-DD
-    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
   }
   return String(value || "");
 }

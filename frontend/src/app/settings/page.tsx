@@ -13,7 +13,6 @@ import {
   changePassword,
   adminUpdateUser,
   type UserResponse,
-  type UnifiedAuditLogEntry,
 } from "@/lib/api";
 import { useUnifiedAuditLog } from "@/lib/queries";
 import { Eye, EyeOff, Plus, Shield, Lock, ClipboardList, Users, Trash2, Pencil, X } from "lucide-react";
@@ -22,6 +21,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 function fmt(n: number): string {
   return n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtCount(n: number): string {
+  return n.toLocaleString("en-PH", { maximumFractionDigits: 0 });
 }
 
 function fmtDate(iso: string): string {
@@ -780,7 +783,7 @@ function UnifiedAuditLogSection({ token }: { token: string | null }) {
                 <span className="flex-1 truncate text-sm text-gray-700 dark:text-gray-300 min-w-0" title={e.file_name}>
                   {e.file_name}
                 </span>
-                <span className="shrink-0 text-sm text-gray-600 dark:text-gray-400">{fmt(e.record_count)} rec</span>
+                <span className="shrink-0 text-sm text-gray-600 dark:text-gray-400">{fmtCount(e.record_count)} rec</span>
                 <span className="shrink-0 text-sm font-medium text-green-600 dark:text-green-400">
                   {e.total_amount > 0 ? `₱${fmt(e.total_amount)}` : "—"}
                 </span>

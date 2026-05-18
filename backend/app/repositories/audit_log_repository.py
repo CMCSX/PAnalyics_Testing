@@ -41,22 +41,41 @@ class AuditLogRepository:
         except Exception:
             pass
         await self.session.flush()
-        # Enforce per-user retention cap: keep only the most recent 15 entries per user
+        # Enforce per-user retention cap: keep only the most recent N entries per user.
+        # Only prune entries older than 1 hour so a burst of actions doesn't
+        # immediately destroy a snapshot the user might want to undo.
+        # The hard cap is set higher (50) so a burst of 21+ actions within an hour
+        # doesn't silently make older entries non-undoable before the 1-hour window passes.
         try:
-            # Count how many entries this user currently has
+            hard_cap = 50
+            soft_cap = 20
+            min_age_cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
             total_result = await self.session.execute(
                 select(func.count()).select_from(AuditLog).where(AuditLog.user_id == user_id)
             )
             total = int(total_result.scalar_one() or 0)
-            # keep only the most recent N entries per user
-            keep = 20
-            if total > keep:
-                # delete the oldest (total - keep) entries for this user
-                n_to_delete = total - keep
-                # select the ids of the oldest rows
+            if total > hard_cap:
+                # Hard cap: delete oldest entries regardless of age to prevent unbounded growth
+                n_to_delete = total - hard_cap
                 ids_result = await self.session.execute(
                     select(AuditLog.id)
                     .where(AuditLog.user_id == user_id)
+                    .order_by(AuditLog.created_at.asc())
+                    .limit(n_to_delete)
+                )
+                ids_to_delete = [row[0] for row in ids_result.all()]
+                if ids_to_delete:
+                    await self.session.execute(delete(AuditLog).where(AuditLog.id.in_(ids_to_delete)))
+                    await self.session.flush()
+            elif total > soft_cap:
+                # Soft cap: only prune entries older than 1 hour
+                n_to_delete = total - soft_cap
+                ids_result = await self.session.execute(
+                    select(AuditLog.id)
+                    .where(
+                        AuditLog.user_id == user_id,
+                        AuditLog.created_at < min_age_cutoff,
+                    )
                     .order_by(AuditLog.created_at.asc())
                     .limit(n_to_delete)
                 )

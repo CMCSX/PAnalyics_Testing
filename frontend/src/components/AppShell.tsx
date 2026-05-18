@@ -24,31 +24,41 @@ import { useUploadEvents } from "@/lib/useUploadEvents";
 function SessionRestorer() {
   const { token } = useAuth();
   const { sessionId, setSessionId, fileName, setFileName, setSessionValidated } = useData();
-  const didRunRef = useRef(false);
+  // Use token as the key so the restorer re-runs when the token changes (e.g. after refresh).
+  // We track the last token we ran for so we don't re-run on unrelated re-renders.
+  const lastTokenRef = useRef<string | null>(null);
+  // Keep refs to the latest sessionId/fileName so the async callback always
+  // reads the current value, not the stale closure from when the effect ran.
+  const sessionIdRef = useRef(sessionId);
+  const fileNameRef = useRef(fileName);
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { fileNameRef.current = fileName; }, [fileName]);
 
-  // Optimistic session validation: if we already have a sessionId in localStorage,
-  // immediately mark as validated so pages load instantly. Then validate against the
-  // backend in the background and correct any stale/expired session silently.
   useEffect(() => {
     if (!token) return;
-    if (didRunRef.current) return;
-    didRunRef.current = true;
+    // Only re-run if the token has actually changed since the last run.
+    if (lastTokenRef.current === token) return;
+    lastTokenRef.current = token;
 
     // If we have a stored sessionId, trust it immediately — pages can render now.
-    if (sessionId) {
+    if (sessionIdRef.current) {
       setSessionValidated(true);
     }
 
     // Background validation: confirm session is still valid on the backend.
     listUploads(token).then((sessions: UploadSessionOut[]) => {
-      if (sessionId) {
+      const currentSessionId = sessionIdRef.current;
+      const currentFileName = fileNameRef.current;
+      if (currentSessionId) {
         // Validate the stored sessionId still exists on the backend
-        const match = sessions.find((s) => s.id === sessionId);
+        const match = sessions.find((s) => s.id === currentSessionId);
         if (!match) {
-          // Session expired/deleted — clear it
+          // Session expired/deleted (e.g. inactivity purge) — clear it silently
           setSessionId(null);
-        } else if (!fileName) {
-          setFileName(match.file_name);
+          setSessionValidated(true);
+        } else {
+          if (!currentFileName) setFileName(match.file_name);
+          setSessionValidated(true);
         }
       } else {
         // No stored session — auto-pick the most recent one
@@ -60,11 +70,17 @@ function SessionRestorer() {
           setSessionId(latest.id);
           setFileName(latest.file_name);
         }
+        setSessionValidated(true);
       }
-      // Mark validated (in case we didn't already above)
-      setSessionValidated(true);
-    }).catch(() => {
-      // Network error — unblock queries (keep existing sessionId optimistically)
+    }).catch((err: unknown) => {
+      const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+      const is404or401 = msg.includes("404") || msg.includes("401") || msg.includes("403");
+      if (is404or401) {
+        // The stored session is definitively gone or unauthorized — clear it
+        setSessionId(null);
+      }
+      // For network errors (502/503/timeout) keep the existing sessionId optimistically
+      // so the user doesn't lose their session on a transient cold-start failure.
       setSessionValidated(true);
     });
   }, [token]);  // eslint-disable-line react-hooks/exhaustive-deps
@@ -81,6 +97,26 @@ function BackendWakeup() {
     });
   }, []);
   return null;
+}
+
+/** Subscribes to backend SSE to auto-invalidate the upload list cache. */
+function UploadEventListener() {
+  const { token } = useAuth();
+  useUploadEvents(token);
+  return null;
+}
+
+/** Invisible overlay — covers the page when the sidebar is expanded so any click outside collapses it. */
+function CollapseSidebarOverlay() {
+  const { isCollapsed, setIsCollapsed } = useSidebar();
+  if (isCollapsed) return null;
+  return (
+    <div
+      className="fixed inset-0 z-40"
+      onClick={() => setIsCollapsed(true)}
+      aria-hidden="true"
+    />
+  );
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -164,27 +200,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-/** Subscribes to backend SSE to auto-invalidate the upload list cache. */
-function UploadEventListener() {
-  const { token } = useAuth();
-  useUploadEvents(token);
-  return null;
-}
-
-/** Invisible overlay — covers the page when the sidebar is expanded so any click outside collapses it. */
-function CollapseSidebarOverlay() {
-  const { isCollapsed, setIsCollapsed } = useSidebar();
-  if (isCollapsed) return null;
-  return (
-    <div
-      className="fixed inset-0 z-40"
-      onClick={() => setIsCollapsed(true)}
-      aria-hidden="true"
-    />
-  );
-}
-
-// Authenticated layout
+  // Authenticated layout
   return (
     <DataProvider>
       <BackendWakeup />

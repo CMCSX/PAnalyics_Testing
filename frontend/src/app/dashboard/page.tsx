@@ -3,15 +3,15 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSidebar } from "@/context/SidebarContext";
-import { DollarSign, Users, FileText, Landmark, Waypoints, Hash, BarChart3, ChevronDown, Check, Globe, Info, TrendingUp, Building2, Radio, Loader2 } from "lucide-react";
+import { DollarSign, Users, FileText, Landmark, Waypoints, Hash, BarChart3, ChevronDown, Check, Globe, TrendingUp, Building2, Radio, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useData } from "@/context/DataContext";
 import { useAuth } from "@/context/AuthContext";
 import { DynamicChart } from "@/components/DynamicChart";
 import { DateFilter, DateRange, CustomDateRange, filterByDateRange, dateRangeToBounds } from "@/components/DateFilter";
-import { type DashboardSummary } from "@/lib/api";
 import { useDashboard } from "@/lib/queries";
+import { toast } from "sonner";
 
 function fmt(n: number): string {
   return n.toLocaleString("en-PH", { maximumFractionDigits: 0 });
@@ -30,6 +30,115 @@ function channelType(tp: string): string {
   // Bare touchpoints (no IB/OB prefix) — CALL, EMAIL, SMS, VIBER, FIELD, WALKIN,
   // DEBIT, DIGITAL, VISIT, WHATSAPP, SKIPTRACE, VIBER, REPO AI, FINNONE, WALKIN, etc.
   return "With Touchpoint";
+}
+
+// ── Module-level constants (shared by sub-components) ────────────────────────
+const _paginationBtnClass = "px-2.5 py-1.5 text-sm font-medium rounded-md border bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-500 text-gray-800 dark:text-gray-100 hover:bg-[#5B66E2]/5 hover:border-[#5B66E2] hover:text-[#5B66E2] dark:hover:bg-[#5B66E2]/20 dark:hover:border-[#5B66E2] dark:hover:text-[#8B96F2] disabled:opacity-40 disabled:cursor-not-allowed transition-colors";
+
+// ── Sub-components defined at module level so React doesn't recreate their
+//    identity on every DashboardPage render (avoids unnecessary unmount/remount).
+function MetricCard({ label, value, icon: Icon, iconBg, info }: { label: string; value: string; icon: React.ElementType; iconBg: string; info?: string }) {
+  return (
+    <Card className="p-5 bg-card border-border hover:shadow-lg hover:scale-[1.01] transition-all duration-300 cursor-default">
+      <div className="flex items-start justify-between mb-2">
+        <div>
+          <span className="text-sm font-semibold text-gray-900 dark:text-white block">{label}</span>
+          {info && <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{info}</p>}
+        </div>
+        <div className={`p-2 ${iconBg} rounded-lg flex-shrink-0`}><Icon className="w-4 h-4 text-white" /></div>
+      </div>
+      <div className="text-2xl font-bold text-gray-900 dark:text-white truncate">{value}</div>
+    </Card>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <Card className="p-5 bg-card border-border">
+      <div className="flex items-center justify-between mb-3"><Skeleton className="h-3 w-28" /><Skeleton className="h-8 w-8 rounded-lg" /></div>
+      <Skeleton className="h-7 w-32 mt-1" />
+    </Card>
+  );
+}
+
+function ChartSkeleton({ type, height }: { type: "line" | "bar" | "barh" | "donut" | "pie"; height: number }) {
+  if (type === "line") {
+    const h = height;
+    return (
+      <div className="animate-pulse w-full overflow-hidden rounded-xl" style={{ height }}>
+        <svg width="100%" height="100%" viewBox={`0 0 400 ${h}`} preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+          {[0.2, 0.45, 0.7].map((r) => (
+            <line key={r} x1="36" y1={h * r} x2="396" y2={h * r} stroke="currentColor" strokeWidth="1" className="text-gray-200 dark:text-gray-700" strokeDasharray="4 4" />
+          ))}
+          <polygon points={`36,${h * 0.88} 36,${h * 0.6} 100,${h * 0.42} 155,${h * 0.52} 210,${h * 0.28} 270,${h * 0.38} 330,${h * 0.18} 396,${h * 0.33} 396,${h * 0.88}`} fill="currentColor" className="text-gray-100 dark:text-gray-800" />
+          <polyline points={`36,${h * 0.6} 100,${h * 0.42} 155,${h * 0.52} 210,${h * 0.28} 270,${h * 0.38} 330,${h * 0.18} 396,${h * 0.33}`} fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-300 dark:text-gray-600" />
+        </svg>
+      </div>
+    );
+  }
+  if (type === "bar") {
+    const barHeights = [0.55, 0.8, 0.45, 0.7, 0.6, 0.9, 0.5];
+    const n = barHeights.length, bw = 34;
+    const spacing = (360 - n * bw) / (n + 1);
+    const h = height;
+    return (
+      <div className="animate-pulse w-full overflow-hidden rounded-xl" style={{ height }}>
+        <svg width="100%" height="100%" viewBox={`0 0 400 ${h}`} preserveAspectRatio="none">
+          {barHeights.map((r, i) => { const bh = h * 0.82 * r; const x = 40 + spacing * (i + 1) + bw * i; return <rect key={i} x={x} y={h * 0.88 - bh} width={bw} height={bh} rx="4" fill="currentColor" className="text-gray-200 dark:text-gray-700" />; })}
+          <rect x="38" y={h * 0.88} width="360" height="2" rx="1" fill="currentColor" className="text-gray-200 dark:text-gray-700" />
+        </svg>
+      </div>
+    );
+  }
+  if (type === "barh") {
+    const widths = [0.82, 0.65, 0.9, 0.5, 0.72, 0.58, 0.78];
+    const h = height;
+    const rowH = Math.min(20, (h * 0.8) / widths.length - 4);
+    const gap = (h * 0.9) / widths.length;
+    return (
+      <div className="animate-pulse w-full overflow-hidden rounded-xl" style={{ height }}>
+        <svg width="100%" height="100%" viewBox={`0 0 400 ${h}`} preserveAspectRatio="none">
+          {widths.map((r, i) => { const y = h * 0.05 + gap * i + (gap - rowH) / 2; return <rect key={i} x="68" y={y} width={310 * r} height={rowH} rx="4" fill="currentColor" className="text-gray-200 dark:text-gray-700" />; })}
+        </svg>
+      </div>
+    );
+  }
+  const size = Math.min(height * 0.85, 180);
+  const outerR = size / 2 - 2;
+  const strokeW = type === "donut" ? outerR * 0.38 : 0;
+  const circleR = type === "donut" ? outerR - strokeW / 2 : outerR;
+  return (
+    <div className="animate-pulse w-full flex items-center justify-center" style={{ height }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        {type === "pie" ? (
+          <circle cx={size / 2} cy={size / 2} r={outerR} fill="currentColor" className="text-gray-200 dark:text-gray-700" />
+        ) : (
+          <circle cx={size / 2} cy={size / 2} r={circleR} fill="none" stroke="currentColor" strokeWidth={strokeW} className="text-gray-200 dark:text-gray-700" />
+        )}
+      </svg>
+    </div>
+  );
+}
+
+function Pagination({ page, setPage, total, rowsPerPage }: { page: number; setPage: (p: number) => void; total: number; rowsPerPage: number }) {
+  const totalPages = Math.max(1, Math.ceil(total / rowsPerPage));
+  if (totalPages <= 1) return null;
+  const pages: number[] = [];
+  let start = Math.max(1, page - 2); const end = Math.min(totalPages, start + 4); start = Math.max(1, end - 4);
+  for (let i = start; i <= end; i++) pages.push(i);
+  const fmtN = (n: number) => n.toLocaleString("en-PH", { maximumFractionDigits: 0 });
+  return (
+    <div className="px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-gray-200 dark:border-gray-700">
+      <p className="text-sm text-gray-500 dark:text-gray-400">Showing {fmtN((page - 1) * rowsPerPage + 1)}–{fmtN(Math.min(page * rowsPerPage, total))} of {fmtN(total)}</p>
+      <div className="flex items-center gap-1">
+        <button onClick={() => setPage(1)} disabled={page === 1} className={_paginationBtnClass}>First</button>
+        <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className={_paginationBtnClass}>Prev</button>
+        {pages.map((pg) => <button key={pg} onClick={() => setPage(pg)} className={`px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${pg === page ? "bg-[#4a55d1] text-white border-[#4a55d1] shadow-sm" : _paginationBtnClass}`}>{pg}</button>)}
+        <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} className={_paginationBtnClass}>Next</button>
+        <button onClick={() => setPage(totalPages)} disabled={page === totalPages} className={_paginationBtnClass}>Last</button>
+      </div>
+    </div>
+  );
 }
 
 export default function DashboardPage() {
@@ -59,6 +168,10 @@ export default function DashboardPage() {
   useEffect(() => {
     if (sessionId && apiError && (apiError.message.includes("404") || apiError.message.includes("Not Found"))) {
       setSessionId(null);
+      toast("Session expired", {
+        description: "Your uploaded data was cleared after 1 hour of inactivity. Please upload a new file.",
+        duration: 8000,
+      });
     }
   }, [apiError, sessionId, setSessionId]);
 
@@ -462,132 +575,8 @@ export default function DashboardPage() {
     { id: "channels" as const, label: "Touchpoints", icon: Radio },
   ];
 
-  const paginationBtnClass = "px-2.5 py-1.5 text-sm font-medium rounded-md border bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-500 text-gray-800 dark:text-gray-100 hover:bg-[#5B66E2]/5 hover:border-[#5B66E2] hover:text-[#5B66E2] dark:hover:bg-[#5B66E2]/20 dark:hover:border-[#5B66E2] dark:hover:text-[#8B96F2] disabled:opacity-40 disabled:cursor-not-allowed transition-colors";
   const dropdownBtnClass = "flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-gray-700 dark:text-gray-200 hover:bg-muted/50 dark:hover:bg-muted transition-colors";
   const dropdownPanelClass = "absolute right-0 top-full mt-1 z-50 w-64 max-h-72 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg";
-
-  function MetricCard({ label, value, icon: Icon, iconBg, info }: { label: string; value: string; icon: React.ElementType; iconBg: string; info?: string }) {
-    return (
-      <Card className="p-5 bg-card border-border hover:shadow-lg hover:scale-[1.01] transition-all duration-300 cursor-default">
-        <div className="flex items-start justify-between mb-2">
-          <div>
-            <span className="text-sm font-semibold text-gray-900 dark:text-white block">{label}</span>
-            {info && <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{info}</p>}
-          </div>
-          <div className={`p-2 ${iconBg} rounded-lg flex-shrink-0`}><Icon className="w-4 h-4 text-white" /></div>
-        </div>
-        <div className="text-2xl font-bold text-gray-900 dark:text-white truncate">{value}</div>
-      </Card>
-    );
-  }
-
-  function ChartSkeleton({ type, height }: { type: "line" | "bar" | "barh" | "donut" | "pie"; height: number }) {
-    if (type === "line") {
-      const h = height;
-      return (
-        <div className="animate-pulse w-full overflow-hidden rounded-xl" style={{ height }}>
-          <svg width="100%" height="100%" viewBox={`0 0 400 ${h}`} preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-            {[0.2, 0.45, 0.7].map((r) => (
-              <line key={r} x1="36" y1={h * r} x2="396" y2={h * r} stroke="currentColor" strokeWidth="1" className="text-gray-200 dark:text-gray-700" strokeDasharray="4 4" />
-            ))}
-            <polygon
-              points={`36,${h * 0.88} 36,${h * 0.6} 100,${h * 0.42} 155,${h * 0.52} 210,${h * 0.28} 270,${h * 0.38} 330,${h * 0.18} 396,${h * 0.33} 396,${h * 0.88}`}
-              fill="currentColor"
-              className="text-gray-100 dark:text-gray-800"
-            />
-            <polyline
-              points={`36,${h * 0.6} 100,${h * 0.42} 155,${h * 0.52} 210,${h * 0.28} 270,${h * 0.38} 330,${h * 0.18} 396,${h * 0.33}`}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="text-gray-300 dark:text-gray-600"
-            />
-          </svg>
-        </div>
-      );
-    }
-    if (type === "bar") {
-      const barHeights = [0.55, 0.8, 0.45, 0.7, 0.6, 0.9, 0.5];
-      const n = barHeights.length, bw = 34;
-      const spacing = (360 - n * bw) / (n + 1);
-      const h = height;
-      return (
-        <div className="animate-pulse w-full overflow-hidden rounded-xl" style={{ height }}>
-          <svg width="100%" height="100%" viewBox={`0 0 400 ${h}`} preserveAspectRatio="none">
-            {barHeights.map((r, i) => {
-              const bh = h * 0.82 * r;
-              const x = 40 + spacing * (i + 1) + bw * i;
-              return <rect key={i} x={x} y={h * 0.88 - bh} width={bw} height={bh} rx="4" fill="currentColor" className="text-gray-200 dark:text-gray-700" />;
-            })}
-            <rect x="38" y={h * 0.88} width="360" height="2" rx="1" fill="currentColor" className="text-gray-200 dark:text-gray-700" />
-          </svg>
-        </div>
-      );
-    }
-    if (type === "barh") {
-      const widths = [0.82, 0.65, 0.9, 0.5, 0.72, 0.58, 0.78];
-      const h = height;
-      const rowH = Math.min(20, (h * 0.8) / widths.length - 4);
-      const gap = (h * 0.9) / widths.length;
-      return (
-        <div className="animate-pulse w-full overflow-hidden rounded-xl" style={{ height }}>
-          <svg width="100%" height="100%" viewBox={`0 0 400 ${h}`} preserveAspectRatio="none">
-            {widths.map((r, i) => {
-              const y = h * 0.05 + gap * i + (gap - rowH) / 2;
-              return <rect key={i} x="68" y={y} width={310 * r} height={rowH} rx="4" fill="currentColor" className="text-gray-200 dark:text-gray-700" />;
-            })}
-          </svg>
-        </div>
-      );
-    }
-    // donut or pie
-    const size = Math.min(height * 0.85, 180);
-    const outerR = size / 2 - 2;
-    const strokeW = type === "donut" ? outerR * 0.38 : 0;
-    const circleR = type === "donut" ? outerR - strokeW / 2 : outerR;
-    return (
-      <div className="animate-pulse w-full flex items-center justify-center" style={{ height }}>
-        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-          {type === "pie" ? (
-            <circle cx={size / 2} cy={size / 2} r={outerR} fill="currentColor" className="text-gray-200 dark:text-gray-700" />
-          ) : (
-            <circle cx={size / 2} cy={size / 2} r={circleR} fill="none" stroke="currentColor" strokeWidth={strokeW} className="text-gray-200 dark:text-gray-700" />
-          )}
-        </svg>
-      </div>
-    );
-  }
-
-  function SkeletonCard() {
-    return (
-      <Card className="p-5 bg-card border-border">
-        <div className="flex items-center justify-between mb-3"><Skeleton className="h-3 w-28" /><Skeleton className="h-8 w-8 rounded-lg" /></div>
-        <Skeleton className="h-7 w-32 mt-1" />
-      </Card>
-    );
-  }
-
-  function Pagination({ page, setPage, total, rowsPerPage }: { page: number; setPage: (p: number) => void; total: number; rowsPerPage: number }) {
-    const totalPages = Math.max(1, Math.ceil(total / rowsPerPage));
-    if (totalPages <= 1) return null;
-    const pages: number[] = [];
-    let start = Math.max(1, page - 2); const end = Math.min(totalPages, start + 4); start = Math.max(1, end - 4);
-    for (let i = start; i <= end; i++) pages.push(i);
-    return (
-      <div className="px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-gray-200 dark:border-gray-700">
-        <p className="text-sm text-gray-500 dark:text-gray-400">Showing {fmt((page - 1) * rowsPerPage + 1)}–{fmt(Math.min(page * rowsPerPage, total))} of {fmt(total)}</p>
-        <div className="flex items-center gap-1">
-          <button onClick={() => setPage(1)} disabled={page === 1} className={paginationBtnClass}>First</button>
-          <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className={paginationBtnClass}>Prev</button>
-          {pages.map((pg) => <button key={pg} onClick={() => setPage(pg)} className={`px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${pg === page ? "bg-[#4a55d1] text-white border-[#4a55d1] shadow-sm" : paginationBtnClass}`}>{pg}</button>)}
-          <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} className={paginationBtnClass}>Next</button>
-          <button onClick={() => setPage(totalPages)} disabled={page === totalPages} className={paginationBtnClass}>Last</button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="px-4 sm:px-8 py-8 min-h-screen">
@@ -709,7 +698,12 @@ export default function DashboardPage() {
               <p className="text-sm text-[#5B66E2] dark:text-[#8B96F2]">
                 No records found. Upload a dataset to get started.
               </p>
-
+              <button
+                onClick={handleUploadNav}
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-[#5B66E2] text-white hover:bg-[#4a55d1] transition-colors"
+              >
+                Upload Data
+              </button>
             </div>
           )}
 
@@ -824,7 +818,7 @@ export default function DashboardPage() {
                   <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Payment Amount by Bank</h3>
                   <p className="text-xs text-gray-400 dark:text-gray-500">Total amount collected per bank — filter by environment to drill down</p>
                 </div>
-                <select value={portfolioBankTopN === "all" ? "all" : String(portfolioBankTopN)} onChange={(e) => setPortfolioBankTopN(e.target.value === "all" ? "all" : parseInt(e.target.value))} className="text-xs px-2 py-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-[#5B66E2]">
+                <select value={portfolioBankTopN === "all" ? "all" : String(portfolioBankTopN)} onChange={(e) => { setPortfolioBankTopN(e.target.value === "all" ? "all" : parseInt(e.target.value)); setPortfolioBankPage(1); }} className="text-xs px-2 py-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-[#5B66E2]">
                   <option value="10">Top 10</option><option value="20">Top 20</option><option value="50">Top 50</option><option value="all">All</option>
                 </select>
               </div>
@@ -908,7 +902,7 @@ export default function DashboardPage() {
                     <td className="px-4 py-3 text-sm text-right text-gray-900 dark:text-white">{fmt(portfolioAnalytics.totalPayments)}</td>
                     <td className="px-4 py-3 text-sm text-right text-gray-900 dark:text-white">100.0%</td>
                   </tr>
-                  {portfolioAnalytics.bankAnalytics.slice((portfolioBankPage - 1) * bankRowsPerPage, portfolioBankPage * bankRowsPerPage).map((b) => (
+                  {portfolioAnalytics.bankAnalytics.slice(0, portfolioBankTopN === "all" ? undefined : portfolioBankTopN).slice((portfolioBankPage - 1) * bankRowsPerPage, portfolioBankPage * bankRowsPerPage).map((b) => (
                     <tr key={b.bank} className="hover:bg-[#5B66E2]/5 dark:hover:bg-[#5B66E2]/10 transition-colors duration-200">
                       <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white whitespace-nowrap">{b.bank}</td>
                       <td className="px-4 py-3 text-sm text-right text-gray-700 dark:text-gray-300">{fmt(b.accountCount)}</td>
@@ -919,7 +913,7 @@ export default function DashboardPage() {
                   ))}
                 </tbody>
               </table>
-              <Pagination page={portfolioBankPage} setPage={setPortfolioBankPage} total={portfolioAnalytics.bankAnalytics.length} rowsPerPage={bankRowsPerPage} />
+              <Pagination page={portfolioBankPage} setPage={setPortfolioBankPage} total={portfolioBankTopN === "all" ? portfolioAnalytics.bankAnalytics.length : Math.min(portfolioBankTopN, portfolioAnalytics.bankAnalytics.length)} rowsPerPage={bankRowsPerPage} />
             </div>
           )}
         </>
