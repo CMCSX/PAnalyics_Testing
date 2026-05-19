@@ -378,14 +378,32 @@ export default function SheetsPage() {
         filter: "agTextColumnFilter",
         minWidth: 140,
         flex: 1,
+        // Display stored YYYY-MM-DD as DD/MM/YYYY so the pre-filled edit value
+        // is already in the format the valueSetter accepts.
+        valueFormatter: (params) => {
+          const v = String(params.value ?? "").trim();
+          if (!v) return "";
+          // Convert YYYY-MM-DD → DD/MM/YYYY for display
+          const iso = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+          if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+          return v; // already in another format — show as-is
+        },
         valueSetter: (params) => {
           const raw = String(params.newValue ?? "").trim();
           if (!raw) {
             params.data.paymentDate = "";
             return true;
           }
-          // Accept DD/MM/YYYY only
-          const match = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+
+          // Accept YYYY-MM-DD (the stored ISO format — user didn't change the value)
+          if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+            params.data.paymentDate = raw;
+            return true;
+          }
+
+          // Accept DD/MM/YYYY (the displayed format after valueFormatter)
+          // Also accept D/M/YYYY with single-digit day or month
+          const match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
           if (!match) {
             toast.error("Invalid date format. Use DD/MM/YYYY (e.g. 31/01/2026).");
             return false;
@@ -403,8 +421,8 @@ export default function SheetsPage() {
             toast.error("Invalid date. Please enter a real date in DD/MM/YYYY format.");
             return false;
           }
-          // Store as YYYY-MM-DD internally (ISO format used elsewhere in the app)
-          params.data.paymentDate = `${yyyy}-${mm}-${dd}`;
+          // Store as YYYY-MM-DD internally
+          params.data.paymentDate = `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
           return true;
         },
       },

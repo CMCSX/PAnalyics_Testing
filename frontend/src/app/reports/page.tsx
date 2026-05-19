@@ -6,8 +6,6 @@ import {
   FileSpreadsheet,
   BarChart3,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   FileJson,
   FileText,
   Settings2,
@@ -44,7 +42,7 @@ export default function ReportsPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bankPage, setBankPage] = useState(1);
-  const bankRowsPerPage = 15;
+  const [bankRowsPerPage, setBankRowsPerPage] = useState(15);
 
   // Export field selection
   const [selectedFields, setSelectedFields] = useState<Set<string>>(
@@ -323,31 +321,53 @@ export default function ReportsPage() {
                 ))}
               </tbody>
             </table>
-            {reportBankAnalytics.length > bankRowsPerPage && (
-              <div className="print:hidden flex items-center justify-between px-6 py-3 border-t border-gray-200 dark:border-gray-700">
-                <span className="text-sm text-gray-500 dark:text-gray-400">
-                  Page {bankPage} of {Math.ceil(reportBankAnalytics.length / bankRowsPerPage)}
-                </span>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={bankPage <= 1}
-                    onClick={() => setBankPage((p) => p - 1)}
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={bankPage >= Math.ceil(reportBankAnalytics.length / bankRowsPerPage)}
-                    onClick={() => setBankPage((p) => p + 1)}
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </Button>
+            {(() => {
+              const totalPages = Math.max(1, Math.ceil(reportBankAnalytics.length / bankRowsPerPage));
+              if (reportBankAnalytics.length === 0) return null;
+              const start = (bankPage - 1) * bankRowsPerPage + 1;
+              const end = Math.min(bankPage * bankRowsPerPage, reportBankAnalytics.length);
+              // Build page number window
+              const pageNums: number[] = [];
+              let ps = Math.max(1, bankPage - 2);
+              const pe = Math.min(totalPages, ps + 4);
+              ps = Math.max(1, pe - 4);
+              for (let i = ps; i <= pe; i++) pageNums.push(i);
+              const btnClass = "px-2.5 py-1.5 text-sm font-medium rounded-md border bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-500 text-gray-800 dark:text-gray-100 hover:bg-[#5B66E2]/5 hover:border-[#5B66E2] hover:text-[#5B66E2] dark:hover:bg-[#5B66E2]/20 dark:hover:border-[#5B66E2] dark:hover:text-[#8B96F2] disabled:opacity-40 disabled:cursor-not-allowed transition-colors";
+              return (
+                <div className="print:hidden flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center gap-3">
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Showing {fmt(start)}–{fmt(end)} of {fmt(reportBankAnalytics.length)} banks
+                    </p>
+                    <select
+                      value={bankRowsPerPage}
+                      onChange={(e) => { setBankRowsPerPage(parseInt(e.target.value)); setBankPage(1); }}
+                      className="text-xs px-2 py-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-[#5B66E2]"
+                    >
+                      <option value={10}>10 / page</option>
+                      <option value={15}>15 / page</option>
+                      <option value={25}>25 / page</option>
+                      <option value={50}>50 / page</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setBankPage(1)} disabled={bankPage === 1} className={btnClass}>First</button>
+                    <button onClick={() => setBankPage((p) => Math.max(1, p - 1))} disabled={bankPage === 1} className={btnClass}>Prev</button>
+                    {pageNums.map((pg) => (
+                      <button
+                        key={pg}
+                        onClick={() => setBankPage(pg)}
+                        className={`px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${pg === bankPage ? "bg-[#4a55d1] text-white border-[#4a55d1] shadow-sm" : btnClass}`}
+                      >
+                        {pg}
+                      </button>
+                    ))}
+                    <button onClick={() => setBankPage((p) => Math.min(totalPages, p + 1))} disabled={bankPage === totalPages} className={btnClass}>Next</button>
+                    <button onClick={() => setBankPage(totalPages)} disabled={bankPage === totalPages} className={btnClass}>Last</button>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         )}
       </div>

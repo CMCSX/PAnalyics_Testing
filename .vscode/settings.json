@@ -3,5 +3,6 @@
   "python.analysis.extraPaths": [
     "${workspaceFolder}/backend"
   ],
-  "tasksync.autopilot": false
+  "tasksync.autopilot": false,
+  "kiroAgent.configureMCP": "Disabled"
 }
