@@ -15,6 +15,7 @@ import { useDashboard, useTransactions, queryKeys } from "@/lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { exportToExcel, exportToCSV } from "@/utils/exportUtils";
+import { formatDisplayDate } from "@/utils/dateUtils";
 import type { PaymentRecord, ParsedData } from "@/types/data";
 
 function fmt(n: number): string {
@@ -724,7 +725,7 @@ export default function TransactionsPage() {
             >
               <option value="all">All Dates</option>
               {displayDates.map((d) => (
-                <option key={d} value={d}>{d}</option>
+                <option key={d} value={d}>{formatDisplayDate(d)}</option>
               ))}
             </select>
           </div>
@@ -766,7 +767,7 @@ export default function TransactionsPage() {
                     {p.bank}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap">
-                    {p.paymentDate}
+                    {formatDisplayDate(p.paymentDate)}
                   </td>
                   <td className="px-4 py-3 text-sm text-right font-medium text-green-600 dark:text-green-400 whitespace-nowrap">
                     {`₱${fmt(p.paymentAmount)}`}

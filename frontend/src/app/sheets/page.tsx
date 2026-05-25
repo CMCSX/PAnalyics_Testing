@@ -378,14 +378,13 @@ export default function SheetsPage() {
         filter: "agTextColumnFilter",
         minWidth: 140,
         flex: 1,
-        // Display stored YYYY-MM-DD as DD/MM/YYYY so the pre-filled edit value
-        // is already in the format the valueSetter accepts.
+        // Display stored YYYY-MM-DD as MM-DD-YYYY
         valueFormatter: (params) => {
           const v = String(params.value ?? "").trim();
           if (!v) return "";
-          // Convert YYYY-MM-DD → DD/MM/YYYY for display
+          // Convert YYYY-MM-DD → MM-DD-YYYY for display
           const iso = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-          if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+          if (iso) return `${iso[2]}-${iso[3]}-${iso[1]}`;
           return v; // already in another format — show as-is
         },
         valueSetter: (params) => {
@@ -395,20 +394,19 @@ export default function SheetsPage() {
             return true;
           }
 
-          // Accept YYYY-MM-DD (the stored ISO format — user didn't change the value)
+          // Accept YYYY-MM-DD (the stored ISO format)
           if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
             params.data.paymentDate = raw;
             return true;
           }
 
-          // Accept DD/MM/YYYY (the displayed format after valueFormatter)
-          // Also accept D/M/YYYY with single-digit day or month
-          const match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          // Accept MM-DD-YYYY or MM/DD/YYYY (also accepts single digits M-D-YYYY)
+          const match = raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
           if (!match) {
-            toast.error("Invalid date format. Use DD/MM/YYYY (e.g. 31/01/2026).");
+            toast.error("Invalid date format. Use MM-DD-YYYY (e.g. 01-31-2026).");
             return false;
           }
-          const [, dd, mm, yyyy] = match;
+          const [, mm, dd, yyyy] = match;
           const day = parseInt(dd, 10);
           const month = parseInt(mm, 10);
           const year = parseInt(yyyy, 10);
@@ -418,11 +416,11 @@ export default function SheetsPage() {
             d.getMonth() + 1 !== month ||
             d.getDate() !== day
           ) {
-            toast.error("Invalid date. Please enter a real date in DD/MM/YYYY format.");
+            toast.error("Invalid date. Please enter a real date in MM-DD-YYYY format.");
             return false;
           }
           // Store as YYYY-MM-DD internally
-          params.data.paymentDate = `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+          params.data.paymentDate = `${yyyy}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
           return true;
         },
       },

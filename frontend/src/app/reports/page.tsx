@@ -28,6 +28,7 @@ import { exportToExcel, exportToCSV, exportToJSON, EXPORT_FIELDS, type ExportOpt
 import { exportAllRecords } from "@/lib/api";
 import { useDashboard } from "@/lib/queries";
 import { toast } from "sonner";
+import { formatDisplayDate } from "@/utils/dateUtils";
 import type { DataRow } from "@/types/data";
 
 function fmt(n: number): string {
@@ -67,7 +68,7 @@ export default function ReportsPage() {
     if (!data) return [];
     return data.payments.map((p) => ({
       Bank: p.bank,
-      "Payment Date": p.paymentDate,
+      "Payment Date": formatDisplayDate(p.paymentDate),
       "Payment Amount": p.paymentAmount,
       Account: p.account,
       Touchpoint: p.touchpoint,
@@ -82,7 +83,7 @@ export default function ReportsPage() {
     const allItems = await exportAllRecords(token, sessionId);
     return allItems.map((r) => ({
       Bank: r.bank,
-      "Payment Date": r.payment_date ?? "",
+      "Payment Date": formatDisplayDate(r.payment_date),
       "Payment Amount": r.payment_amount,
       Account: r.account,
       Touchpoint: r.touchpoint ?? "",
