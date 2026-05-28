@@ -20,6 +20,7 @@ export interface BankAnalytics {
   debtorSum: number;
   percentage: number;
   paymentCount: number;
+  touchpointType?: string;
 }
 
 export interface TouchpointAnalytics {

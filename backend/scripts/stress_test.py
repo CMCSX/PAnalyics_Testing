@@ -72,7 +72,7 @@ class Stats:
 
 # ─── Individual test helpers ──────────────────────────────────────────────────
 
-async def test_health(client: httpx.AsyncClient, stats: Stats) -> None:
+async def stress_health(client: httpx.AsyncClient, stats: Stats) -> None:
     t0 = time.perf_counter()
     try:
         r = await client.get(f"{BASE_URL}/health")
@@ -97,7 +97,7 @@ async def do_login(client: httpx.AsyncClient, stats: Stats) -> str | None:
     return None
 
 
-async def test_me(client: httpx.AsyncClient, token: str, stats: Stats) -> None:
+async def stress_me(client: httpx.AsyncClient, token: str, stats: Stats) -> None:
     t0 = time.perf_counter()
     try:
         r = await client.get(
@@ -109,7 +109,7 @@ async def test_me(client: httpx.AsyncClient, token: str, stats: Stats) -> None:
         stats.record_error(str(e))
 
 
-async def test_uploads_list(client: httpx.AsyncClient, token: str, stats: Stats) -> None:
+async def stress_uploads_list(client: httpx.AsyncClient, token: str, stats: Stats) -> None:
     t0 = time.perf_counter()
     try:
         r = await client.get(
@@ -132,9 +132,9 @@ async def virtual_user(
 ) -> None:
     async with httpx.AsyncClient(timeout=60.0) as client:
         for _ in range(REQUESTS_PER_USER):
-            await test_health(client, health_stats)
-            await test_me(client, token, me_stats)
-            await test_uploads_list(client, token, uploads_stats)
+            await stress_health(client, health_stats)
+            await stress_me(client, token, me_stats)
+            await stress_uploads_list(client, token, uploads_stats)
             # tiny jitter: avoids pure thundering-herd while keeping pressure high
             await asyncio.sleep(0.02)
 

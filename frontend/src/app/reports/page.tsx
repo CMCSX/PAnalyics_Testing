@@ -31,6 +31,16 @@ import { toast } from "sonner";
 import { formatDisplayDate } from "@/utils/dateUtils";
 import type { DataRow } from "@/types/data";
 
+// Classify touchpoint into channel type
+function channelType(tp: string): string {
+  const u = tp.toUpperCase().trim();
+  if (u.startsWith("IB ") || u === "IB CALL" || u === "IB EMAIL" || u === "IB SMS" || u === "IB VIBER" || u === "IB FIELD" || u === "IB WALKIN" || u === "IB WHATSAPP" || u === "IB VISIT" || u === "IB DEBIT" || u === "IB REPO AI" || u === "IB SKIPTRACE") return "Inbound";
+  if (u.startsWith("OB ") || u === "OB CALL" || u === "OB EMAIL" || u === "OB SMS" || u === "OB VIBER" || u === "OB FIELD" || u === "OB WALKIN" || u === "OB DEBIT" || u === "OB REPO AI" || u === "OB SKIPTRACE" || u === "OB PAIDLIST") return "Outbound";
+  if (u === "GHOST PAYMENT") return "Ghost Payment";
+  if (u === "NO TOUCHPOINT") return "No Touchpoint";
+  return "With Touchpoint";
+}
+
 function fmt(n: number): string {
   return n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -64,6 +74,37 @@ export default function ReportsPage() {
     });
   };
 
+  // Map bank names to their associated touchpoint types
+  const bankTouchpointTypesMap = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+
+    if (data?.payments) {
+      for (const p of data.payments) {
+        if (!p.bank) continue;
+        const type = channelType(p.touchpoint || "");
+        if (!map.has(p.bank)) {
+          map.set(p.bank, new Set());
+        }
+        map.get(p.bank)!.add(type);
+      }
+    } else if (apiSummary?.bank_touchpoint_matrix) {
+      for (const row of apiSummary.bank_touchpoint_matrix) {
+        if (!row.bank) continue;
+        const type = channelType(row.touchpoint || "");
+        if (!map.has(row.bank)) {
+          map.set(row.bank, new Set());
+        }
+        map.get(row.bank)!.add(type);
+      }
+    }
+
+    const formattedMap = new Map<string, string>();
+    for (const [bank, types] of map.entries()) {
+      formattedMap.set(bank, Array.from(types).sort().join(", "));
+    }
+    return formattedMap;
+  }, [data, apiSummary]);
+
   const reportData = useMemo(() => {
     if (!data) return [];
     return data.payments.map((p) => ({
@@ -72,13 +113,14 @@ export default function ReportsPage() {
       "Payment Amount": p.paymentAmount,
       Account: p.account,
       Touchpoint: p.touchpoint,
+      Environment: p.environment ?? "",
     }));
   }, [data]);
 
   // Fetch ALL records from backend for export.
   // Uses the streaming CSV endpoint for CSV format (safe for any size),
   // and the JSON export endpoint for Excel/JSON (capped at 500k records).
-  const fetchAllForExport = async (): Promise<{ Bank: string; "Payment Date": string; "Payment Amount": number; Account: string; Touchpoint: string }[]> => {
+  const fetchAllForExport = async (): Promise<{ Bank: string; "Payment Date": string; "Payment Amount": number; Account: string; Touchpoint: string; Environment: string }[]> => {
     if (!token || !sessionId) return reportData;
     const allItems = await exportAllRecords(token, sessionId);
     return allItems.map((r) => ({
@@ -87,6 +129,7 @@ export default function ReportsPage() {
       "Payment Amount": r.payment_amount,
       Account: r.account,
       Touchpoint: r.touchpoint ?? "",
+      Environment: r.environment ?? "",
     }));
   };
 
@@ -122,7 +165,10 @@ export default function ReportsPage() {
         fields: Array.from(selectedFields),
         includeSummary,
         formatCurrency,
-        bankAnalytics: data?.bankAnalytics ?? apiSummary?.banks.map((b) => ({ bank: b.bank, totalAmount: b.total_amount, paymentCount: b.payment_count, accountCount: b.account_count, percentage: b.percentage, debtorSum: b.payment_count })),
+        bankAnalytics: (data?.bankAnalytics ?? apiSummary?.banks.map((b) => ({ bank: b.bank, totalAmount: b.total_amount, paymentCount: b.payment_count, accountCount: b.account_count, percentage: b.percentage, debtorSum: b.payment_count })) ?? []).map((b) => ({
+          ...b,
+          touchpointType: bankTouchpointTypesMap.get(b.bank) || "—"
+        })),
         touchpointAnalytics: data?.touchpointAnalytics ?? apiSummary?.touchpoints.map((t) => ({ touchpoint: t.touchpoint, count: t.count, totalAmount: t.total_amount, percentage: t.percentage })),
         totalAmount: data?.totalAmount ?? apiSummary?.total_amount,
         dateRangeLabel: "All Data",
@@ -304,6 +350,7 @@ export default function ReportsPage() {
               <thead className="bg-muted">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Bank</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Touchpoint Type</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Payments</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Total Amount</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">% of Total</th>
@@ -315,6 +362,62 @@ export default function ReportsPage() {
                   .map((b) => (
                   <tr key={b.bank} className="hover:bg-[#5B66E2]/5 dark:hover:bg-[#5B66E2]/10 transition-colors">
                     <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">{b.bank}</td>
+                    <td className="px-4 py-3 text-sm text-left text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                      <div className="flex items-center gap-1.5">
+                        {(() => {
+                          const typesStr = bankTouchpointTypesMap.get(b.bank);
+                          if (!typesStr) return <span className="text-gray-400">—</span>;
+                          const allTypes = typesStr.split(", ");
+                          if (allTypes.length <= 2) {
+                            return allTypes.map((t) => (
+                              <span
+                                key={t}
+                                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-[#5B66E2]/10 text-[#5B66E2] dark:text-[#8B96F2]"
+                              >
+                                {t}
+                              </span>
+                            ));
+                          }
+                          return (
+                            <>
+                              {allTypes.slice(0, 2).map((t) => (
+                                <span
+                                  key={t}
+                                  className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-[#5B66E2]/10 text-[#5B66E2] dark:text-[#8B96F2]"
+                                >
+                                  {t}
+                                </span>
+                              ))}
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <span
+                                    role="button"
+                                    className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 border border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-700 cursor-pointer transition-colors shadow-sm select-none"
+                                  >
+                                    +{allTypes.length - 2}
+                                  </span>
+                                </PopoverTrigger>
+                                <PopoverContent align="start" className="w-56 p-3">
+                                  <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wider">
+                                    All Touchpoint Types
+                                  </p>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {allTypes.map((t) => (
+                                      <span
+                                        key={t}
+                                        className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-[#5B66E2]/10 text-[#5B66E2] dark:text-[#8B96F2]"
+                                      >
+                                        {t}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </PopoverContent>
+                              </Popover>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-sm text-right text-gray-700 dark:text-gray-300">{fmt(b.paymentCount)}</td>
                     <td className="px-4 py-3 text-sm text-right text-green-600 dark:text-green-400 font-medium">₱{fmt(b.totalAmount)}</td>
                     <td className="px-4 py-3 text-sm text-right text-gray-700 dark:text-gray-300">{b.percentage.toFixed(2)}%</td>

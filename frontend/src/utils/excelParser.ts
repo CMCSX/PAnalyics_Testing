@@ -54,28 +54,60 @@ function formatDate(value: unknown): string {
     const s = value.trim();
     // Already YYYY-MM-DD — check first
     if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-    // Slash-separated: DD/MM/YYYY (Philippine convention) or MM/DD/YYYY (US).
-    // If first part > 12 → must be DD/MM; if second part > 12 → must be MM/DD.
-    // When both ≤ 12, default to DD/MM (Philippine locale).
-    const slashMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (slashMatch) {
-      const [, p1, p2, yyyy] = slashMatch;
-      const n1 = parseInt(p1, 10), n2 = parseInt(p2, 10);
-      let dd: string, mm: string;
-      if (n1 > 12) {
-        dd = p1; mm = p2;          // DD/MM/YYYY
-      } else if (n2 > 12) {
-        mm = p1; dd = p2;          // MM/DD/YYYY
-      } else {
-        dd = p1; mm = p2;          // default DD/MM/YYYY
+
+    const separator = s.includes("/") ? "/" : s.includes("-") ? "-" : null;
+    if (separator) {
+      const parts = s.split(separator);
+      if (parts.length === 3) {
+        const [p1, p2, p3] = parts;
+        // Case 1: First part is a 4-digit year (e.g. YYYY/MM/DD or YYYY-M-D)
+        if (p1.length === 4 && /^\d+$/.test(p1)) {
+          const year = parseInt(p1, 10);
+          const n2 = parseInt(p2, 10);
+          const n3 = parseInt(p3, 10);
+          let mm: number, dd: number;
+          if (n2 > 12) {
+            dd = n2; mm = n3; // YYYY-DD-MM
+          } else {
+            mm = n2; dd = n3; // YYYY-MM-DD
+          }
+          if (!isNaN(year) && !isNaN(mm) && !isNaN(dd) && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+            return `${year}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+          }
+        }
+        // Case 2: Last part is the year (could be 2 or 4 digits)
+        else if (/^\d+$/.test(p3)) {
+          let year = parseInt(p3, 10);
+          if (p3.length === 2) {
+            year = 2000 + year;
+          }
+          const n1 = parseInt(p1, 10);
+          const n2 = parseInt(p2, 10);
+          let dd: number, mm: number;
+          if (n1 > 12) {
+            dd = n1; mm = n2; // DD/MM/YYYY
+          } else if (n2 > 12) {
+            mm = n1; dd = n2; // MM/DD/YYYY
+          } else {
+            dd = n1; mm = n2; // default DD/MM/YYYY (Philippine convention)
+          }
+          if (!isNaN(year) && !isNaN(mm) && !isNaN(dd) && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+            return `${year}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+          }
+        }
       }
-      return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
     }
-    // DD-MM-YYYY → YYYY-MM-DD
-    const dmyMatch = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
-    if (dmyMatch) {
-      const [, dd, mm, yyyy] = dmyMatch;
-      return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+
+    // Excel serial date represented as string
+    if (/^\d+$/.test(s)) {
+      const num = parseInt(s, 10);
+      if (num > 30000 && num < 100000) {
+        const date = new Date((num - 25569) * 86400 * 1000);
+        const y = date.getUTCFullYear();
+        const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+        const d = String(date.getUTCDate()).padStart(2, "0");
+        return `${y}-${m}-${d}`;
+      }
     }
   }
   return String(value || "");
@@ -168,11 +200,16 @@ function categorizePaymentData(data: DataRow[]): ParsedData {
 
   const bankCol = findColumn(keys, ["bank"]);
   const dateCol = findColumn(keys, [
-    "leads_result_edate",
     "date_created",
+    "leads_result_edate",
     "payment date",
     "paymentdate",
     "edate",
+    "transaction date",
+    "trans_date",
+    "value_date",
+    "posting_date",
+    "date_paid",
     "date",
   ]);
   const amountCol = findColumn(keys, [

@@ -134,7 +134,7 @@ export async function exportToExcel(
       summarySheet.getCell(`A${row}`).font = { bold: true, size: 12 };
       row++;
 
-      const bankHeaders = ["Bank", "Payments", "Total Amount", "Accounts", "% of Total"];
+      const bankHeaders = ["Bank", "Touchpoint Type", "Payments", "Total Amount", "Accounts", "% of Total"];
       bankHeaders.forEach((h, i) => {
         const cell = summarySheet.getCell(row, i + 1);
         cell.value = h;
@@ -145,11 +145,12 @@ export async function exportToExcel(
 
       for (const b of options.bankAnalytics) {
         summarySheet.getCell(row, 1).value = b.bank;
-        summarySheet.getCell(row, 2).value = b.paymentCount;
-        summarySheet.getCell(row, 3).value = b.totalAmount;
-        summarySheet.getCell(row, 3).numFmt = "₱#,##0.00";
-        summarySheet.getCell(row, 4).value = b.accountCount;
-        summarySheet.getCell(row, 5).value = `${b.percentage.toFixed(2)}%`;
+        summarySheet.getCell(row, 2).value = b.touchpointType || "—";
+        summarySheet.getCell(row, 3).value = b.paymentCount;
+        summarySheet.getCell(row, 4).value = b.totalAmount;
+        summarySheet.getCell(row, 4).numFmt = "₱#,##0.00";
+        summarySheet.getCell(row, 5).value = b.accountCount;
+        summarySheet.getCell(row, 6).value = `${b.percentage.toFixed(2)}%`;
         row++;
       }
 

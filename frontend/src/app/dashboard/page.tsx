@@ -3,9 +3,11 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSidebar } from "@/context/SidebarContext";
-import { DollarSign, Users, FileText, Landmark, Waypoints, Hash, BarChart3, ChevronDown, Check, Globe, TrendingUp, Building2, Radio, Loader2 } from "lucide-react";
+import { DollarSign, Users, FileText, Landmark, Waypoints, Hash, BarChart3, ChevronDown, Check, Globe, TrendingUp, Building2, Radio, Loader2, Download } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
 import { useData } from "@/context/DataContext";
 import { useAuth } from "@/context/AuthContext";
 import { DynamicChart } from "@/components/DynamicChart";
@@ -189,6 +191,8 @@ export default function DashboardPage() {
   const [selectedTouchpoints, setSelectedTouchpoints] = useState<Set<string>>(new Set());
   const [tpDropdownOpen, setTpDropdownOpen] = useState(false);
   const tpDropdownRef = useRef<HTMLDivElement>(null);
+  const [tpExportOpen, setTpExportOpen] = useState(false);
+  const [bankExportOpen, setBankExportOpen] = useState(false);
 
   const bankRowsPerPage = 15;
 
@@ -563,6 +567,215 @@ export default function DashboardPage() {
   const tpTotal = channelAnalytics.reduce((s, t) => s + t.count, 0);
   const tpTotalAmount = channelAnalytics.reduce((s, t) => s + Math.round(t.totalAmount * 100), 0) / 100;
 
+  const handleTpExportCSV = () => {
+    const rows = channelAnalytics.map((t) => [
+      t.touchpoint || "Unknown",
+      channelType(t.touchpoint || ""),
+      t.count,
+      t.totalAmount.toFixed(2),
+      `${t.percentage.toFixed(1)}%`
+    ]);
+
+    // Append total row
+    rows.push([
+      "Total",
+      "—",
+      tpTotal,
+      tpTotalAmount.toFixed(2),
+      "100.0%"
+    ]);
+
+    const escapeField = (f: string | number | null | undefined) => {
+      const s = String(f ?? "");
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const csv = [
+      ["Touchpoint", "Touchpoint Type", "Transactions", "Total Amount", "% of Total"],
+      ...rows,
+    ]
+      .map((row) => row.map(escapeField).join(","))
+      .join("\n");
+
+    const BOM = "\uFEFF";
+    const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const envLabel = selectedEnvironments.size > 0 ? Array.from(selectedEnvironments).join("_") : "All_Envs";
+    const bankLabel = selectedBanks.size > 0 ? Array.from(selectedBanks).join("_") : "All_Banks";
+    a.download = `touchpoint_analytics_${bankLabel}_${envLabel}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleTpExportXLSX = async () => {
+    const ExcelJS = (await import("exceljs")).default;
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "PayAnalytics";
+    workbook.created = new Date();
+
+    const sheet = workbook.addWorksheet("Touchpoint Analytics");
+
+    sheet.columns = [
+      { header: "Touchpoint", key: "touchpoint", width: 25 },
+      { header: "Touchpoint Type", key: "type", width: 20 },
+      { header: "Transactions", key: "count", width: 15 },
+      { header: "Total Amount", key: "totalAmount", width: 20 },
+      { header: "Share of Total", key: "percentage", width: 15 },
+    ];
+
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    headerRow.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF5B66E2" },
+    };
+    headerRow.alignment = { horizontal: "left" };
+
+    sheet.getColumn("count").alignment = { horizontal: "right" };
+    sheet.getColumn("totalAmount").alignment = { horizontal: "right" };
+    sheet.getColumn("percentage").alignment = { horizontal: "right" };
+
+    channelAnalytics.forEach((t) => {
+      sheet.addRow({
+        touchpoint: t.touchpoint || "Unknown",
+        type: channelType(t.touchpoint || ""),
+        count: t.count,
+        totalAmount: t.totalAmount,
+        percentage: `${t.percentage.toFixed(1)}%`,
+      });
+    });
+
+    const totalRow = sheet.addRow({
+      touchpoint: "Total",
+      type: "—",
+      count: tpTotal,
+      totalAmount: tpTotalAmount,
+      percentage: "100.0%",
+    });
+    totalRow.font = { bold: true };
+
+    sheet.getColumn("totalAmount").numFmt = "₱#,##0.00";
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const envLabel = selectedEnvironments.size > 0 ? Array.from(selectedEnvironments).join("_") : "All_Envs";
+    const bankLabel = selectedBanks.size > 0 ? Array.from(selectedBanks).join("_") : "All_Banks";
+    a.download = `touchpoint_analytics_${bankLabel}_${envLabel}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleBankExportCSV = () => {
+    const rows = portfolioAnalytics.bankAnalytics.map((b) => [
+      b.bank || "Unknown",
+      b.accountCount,
+      b.totalAmount.toFixed(2),
+      b.paymentCount,
+      `${b.percentage.toFixed(1)}%`
+    ]);
+
+    // Append total row
+    rows.push([
+      "Total",
+      portfolioAnalytics.totalAccounts,
+      portfolioAnalytics.totalAmount.toFixed(2),
+      portfolioAnalytics.totalPayments,
+      "100.0%"
+    ]);
+
+    const escapeField = (f: string | number | null | undefined) => {
+      const s = String(f ?? "");
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const csv = [
+      ["Bank", "Unique Accounts", "Total Amount", "Transactions", "% of Total"],
+      ...rows,
+    ]
+      .map((row) => row.map(escapeField).join(","))
+      .join("\n");
+
+    const BOM = "\uFEFF";
+    const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const envLabel = selectedEnvironments.size > 0 ? Array.from(selectedEnvironments).join("_") : "All_Envs";
+    const bankLabel = selectedBanks.size > 0 ? Array.from(selectedBanks).join("_") : "All_Banks";
+    a.download = `bank_analytics_${bankLabel}_${envLabel}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleBankExportXLSX = async () => {
+    const ExcelJS = (await import("exceljs")).default;
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "PayAnalytics";
+    workbook.created = new Date();
+
+    const sheet = workbook.addWorksheet("Bank Analytics");
+
+    sheet.columns = [
+      { header: "Bank", key: "bank", width: 25 },
+      { header: "Unique Accounts", key: "accounts", width: 18 },
+      { header: "Total Amount", key: "totalAmount", width: 20 },
+      { header: "Transactions", key: "count", width: 15 },
+      { header: "Share of Total", key: "percentage", width: 15 },
+    ];
+
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    headerRow.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF5B66E2" },
+    };
+    headerRow.alignment = { horizontal: "left" };
+
+    sheet.getColumn("accounts").alignment = { horizontal: "right" };
+    sheet.getColumn("totalAmount").alignment = { horizontal: "right" };
+    sheet.getColumn("count").alignment = { horizontal: "right" };
+    sheet.getColumn("percentage").alignment = { horizontal: "right" };
+
+    portfolioAnalytics.bankAnalytics.forEach((b) => {
+      sheet.addRow({
+        bank: b.bank || "Unknown",
+        accounts: b.accountCount,
+        totalAmount: b.totalAmount,
+        count: b.paymentCount,
+        percentage: `${b.percentage.toFixed(1)}%`,
+      });
+    });
+
+    const totalRow = sheet.addRow({
+      bank: "Total",
+      accounts: portfolioAnalytics.totalAccounts,
+      totalAmount: portfolioAnalytics.totalAmount,
+      count: portfolioAnalytics.totalPayments,
+      percentage: "100.0%",
+    });
+    totalRow.font = { bold: true };
+
+    sheet.getColumn("totalAmount").numFmt = "₱#,##0.00";
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const envLabel = selectedEnvironments.size > 0 ? Array.from(selectedEnvironments).join("_") : "All_Envs";
+    const bankLabel = selectedBanks.size > 0 ? Array.from(selectedBanks).join("_") : "All_Banks";
+    a.download = `bank_analytics_${bankLabel}_${envLabel}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // ── Shared pagination reset on tab change / filter change ──
   // Note: selectedBanks is intentionally excluded — changing bank filter while on a paginated
   // view should not reset the page (user may be selecting banks from a later page).
@@ -882,7 +1095,32 @@ export default function DashboardPage() {
                   <h3 className="text-base font-semibold text-gray-900 dark:text-white">Bank Analytics</h3>
                   <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Detailed breakdown per bank — unique accounts, total amount collected, transaction count and share</p>
                 </div>
-                <span className="text-xs text-gray-400">{fmt(portfolioAnalytics.bankAnalytics.length)} banks</span>
+                <div className="flex items-center gap-4">
+                  <span className="text-xs text-gray-400">{fmt(portfolioAnalytics.bankAnalytics.length)} banks</span>
+                  <Popover open={bankExportOpen} onOpenChange={setBankExportOpen}>
+                    <PopoverTrigger asChild>
+                      <Button size="sm" className="bg-[#4a55d1] hover:bg-[#4048c0] text-white flex items-center gap-1.5 h-8">
+                        <Download className="w-3.5 h-3.5" />
+                        Export
+                        <ChevronDown className="w-3 h-3" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-36 p-1" align="end">
+                      <button
+                        onClick={() => { handleBankExportCSV(); setBankExportOpen(false); }}
+                        className="w-full text-left px-3 py-2 text-sm rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200"
+                      >
+                        Export as CSV
+                      </button>
+                      <button
+                        onClick={() => { handleBankExportXLSX(); setBankExportOpen(false); }}
+                        className="w-full text-left px-3 py-2 text-sm rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200"
+                      >
+                        Export as XLSX
+                      </button>
+                    </PopoverContent>
+                  </Popover>
+                </div>
               </div>
               <table className="w-full min-w-[700px]">
                 <thead className="bg-muted">
@@ -1007,7 +1245,32 @@ export default function DashboardPage() {
                   <h3 className="text-base font-semibold text-gray-900 dark:text-white">Touchpoint Analytics</h3>
                   <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Full breakdown per touchpoint — transaction count, amount collected, touchpoint type and share of total</p>
                 </div>
-                <span className="text-xs text-gray-400">{fmt(channelAnalytics.length)} touchpoints</span>
+                <div className="flex items-center gap-4">
+                  <span className="text-xs text-gray-400">{fmt(channelAnalytics.length)} touchpoints</span>
+                  <Popover open={tpExportOpen} onOpenChange={setTpExportOpen}>
+                    <PopoverTrigger asChild>
+                      <Button size="sm" className="bg-[#4a55d1] hover:bg-[#4048c0] text-white flex items-center gap-1.5 h-8">
+                        <Download className="w-3.5 h-3.5" />
+                        Export
+                        <ChevronDown className="w-3 h-3" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-36 p-1" align="end">
+                      <button
+                        onClick={() => { handleTpExportCSV(); setTpExportOpen(false); }}
+                        className="w-full text-left px-3 py-2 text-sm rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200"
+                      >
+                        Export as CSV
+                      </button>
+                      <button
+                        onClick={() => { handleTpExportXLSX(); setTpExportOpen(false); }}
+                        className="w-full text-left px-3 py-2 text-sm rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200"
+                      >
+                        Export as XLSX
+                      </button>
+                    </PopoverContent>
+                  </Popover>
+                </div>
               </div>
               <table className="w-full min-w-[500px]">
                 <thead className="bg-muted">

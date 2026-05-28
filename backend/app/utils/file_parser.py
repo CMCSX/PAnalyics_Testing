@@ -16,10 +16,10 @@ from app.schemas.upload import PaymentRecordIn
 # Column-name patterns (case-insensitive partial match)
 _COL_PATTERNS: dict[str, list[str]] = {
     "bank": ["bank"],
-    "account": ["debtor_id", "account", "debtor"],
+    "account": ["debtor_id", "debtorid", "account", "debtor"],
     "touchpoint": ["tagging", "touchpoint", "tag"],
-    "payment_date": ["date_created", "leads_result_edate", "payment date", "edate", "transaction date", "trans_date", "value_date", "posting_date", "date_paid"],
-    "payment_amount": ["leads_result_amount", "payment amount", "amount"],
+    "payment_date": ["date_created", "leads_result_edate", "payment date", "paymentdate", "edate", "transaction date", "trans_date", "value_date", "posting_date", "date_paid", "date"],
+    "payment_amount": ["leads_result_amount", "payment amount", "paymentamount", "amount"],
     "environment": ["environment", "env"],
     "month": ["month"],
 }
@@ -57,42 +57,49 @@ def _format_date(value: object) -> str:
     if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
         return s
 
-    # Slash-separated: could be MM/DD/YYYY (US) or DD/MM/YYYY (PH).
-    # Philippine convention is DD/MM/YYYY.  We use DD/MM/YYYY here.
-    # If the day part > 12 it must be DD/MM; if month part > 12 it must be MM/DD.
-    # When both parts are ≤ 12 we default to DD/MM (Philippine locale).
+    separator = None
     if "/" in s:
+        separator = "/"
+    elif "-" in s:
+        separator = "-"
+
+    if separator:
         try:
-            parts = s.split("/")
+            parts = s.split(separator)
             if len(parts) == 3:
-                p1, p2, year = parts
-                if len(year) == 2:
-                    year = "20" + year
-                n1, n2 = int(p1), int(p2)
-                # If first part > 12 it must be DD/MM/YYYY
-                # If second part > 12 it must be MM/DD/YYYY
-                # Otherwise default to DD/MM/YYYY (Philippine convention)
-                if n1 > 12:
-                    day, month = n1, n2   # DD/MM/YYYY
-                elif n2 > 12:
-                    month, day = n1, n2   # MM/DD/YYYY
-                else:
-                    day, month = n1, n2   # default DD/MM/YYYY
-                dt = datetime(int(year), month, day)
-                return dt.strftime("%Y-%m-%d")
-        except (ValueError, IndexError):
-            pass
-    
-    # Format: DD-MM-YYYY or D-M-YYYY (hyphen-separated, not ISO)
-    if "-" in s and not re.match(r"^\d{4}-\d{2}-\d{2}$", s):
-        try:
-            parts = s.split("-")
-            if len(parts) == 3:
-                day, month, year = parts
-                if len(year) == 2:
-                    year = "20" + year
-                dt = datetime(int(year), int(month), int(day))
-                return dt.strftime("%Y-%m-%d")
+                p1, p2, p3 = parts
+                
+                # Case 1: First part is a 4-digit year (e.g. YYYY/MM/DD or YYYY-M-D)
+                if len(p1) == 4 and p1.isdigit():
+                    year = int(p1)
+                    n2, n3 = int(p2), int(p3)
+                    # n2: month candidate, n3: day candidate
+                    # If second part > 12 it must be day
+                    if n2 > 12:
+                        day, month = n2, n3
+                    else:
+                        month, day = n2, n3
+                    dt = datetime(year, month, day)
+                    return dt.strftime("%Y-%m-%d")
+                
+                # Case 2: Last part is the year (could be 2 or 4 digits)
+                elif p3.isdigit():
+                    if len(p3) == 2:
+                        year = int("20" + p3)
+                    else:
+                        year = int(p3)
+                    n1, n2 = int(p1), int(p2)
+                    # If first part > 12 it must be DD/MM
+                    # If second part > 12 it must be MM/DD
+                    # Otherwise default to DD/MM (Philippine convention)
+                    if n1 > 12:
+                        day, month = n1, n2
+                    elif n2 > 12:
+                        month, day = n1, n2
+                    else:
+                        day, month = n1, n2  # default
+                    dt = datetime(year, month, day)
+                    return dt.strftime("%Y-%m-%d")
         except (ValueError, IndexError):
             pass
     
