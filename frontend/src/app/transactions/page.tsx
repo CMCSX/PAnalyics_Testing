@@ -23,7 +23,7 @@ function fmt(n: number): string {
 }
 
 export default function TransactionsPage() {
-  const { data, setData, rawData, sessionId, setSessionId, sessionValidated, fileName } = useData();
+  const { data, setData, sessionId, setSessionId, sessionValidated, fileName } = useData();
   const { token } = useAuth();
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
@@ -85,7 +85,7 @@ export default function TransactionsPage() {
   const apiTotal = txPage?.total ?? 0;
   const apiTotalAmount = txPage?.total_amount ?? 0;
   const apiEnvironments = dashSummary?.environments ?? [];
-  const apiEnvironmentMap = dashSummary?.environment_map ?? [];
+  const apiEnvironmentMap = useMemo(() => dashSummary?.environment_map ?? [], [dashSummary]);
 
   // Cascading filter helpers (API mode)
   const apiBanks = useMemo(() => {

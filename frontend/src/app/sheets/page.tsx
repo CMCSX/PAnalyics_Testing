@@ -141,7 +141,6 @@ function SetFilter({ model, onModelChange, colDef, api }: CustomFilterProps<Shee
       }
     });
     return Array.from(vals).sort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, field]);
 
   const selected = useMemo(() => (model ? new Set(model) : new Set(allValues)), [model, allValues]);
@@ -193,7 +192,7 @@ function SetFilter({ model, onModelChange, colDef, api }: CustomFilterProps<Shee
 /*  Page                                                              */
 /* ------------------------------------------------------------------ */
 export default function SheetsPage() {
-  const { data, setData, rawData, setRawData, fileName, setFileName, sessionId, setSessionId, sessionValidated } =
+  const { data, setData, setRawData, fileName, setFileName, sessionId, setSessionId, sessionValidated } =
     useData();
   const { token } = useAuth();
   const queryClient = useQueryClient();
@@ -517,7 +516,6 @@ export default function SheetsPage() {
   useEffect(() => {
     if (!fullLoadTrigger || !needsFullLoadRef.current || !sessionId || !token) return;
 
-    const totalRecords = needsFullLoadRef.current.total;
     needsFullLoadRef.current = null; // prevent re-runs
     let cancelled = false;
 
@@ -822,7 +820,7 @@ export default function SheetsPage() {
         },
       },
     });
-  }, [rows, token, sessionId, syncToContext, invalidateAll]);
+  }, [rows, token, sessionId, syncToContext, invalidateAll, queryClient, router, setData, setFileName, setSessionId]);
 
   /* ---- Undo / Redo ---- */
   const undo = useCallback(() => {

@@ -43,7 +43,7 @@ export default function UploadPage() {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
-  const { data, setData, rawData, setRawData, fileName, setFileName, sessionId, setSessionId } = useData();
+  const { data, setData, setRawData, fileName, setFileName, sessionId, setSessionId } = useData();
   const { token } = useAuth();
   const queryClient = useQueryClient();
 

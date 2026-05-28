@@ -269,7 +269,7 @@ export default function DashboardPage() {
     return null;
   }, [apiSummary, data, payments, isFiltered]);
 
-  const fa = rawFa ?? { totalAmount: 0, totalAccounts: 0, totalPayments: 0, bankAnalytics: [], touchpointAnalytics: [] };
+  const fa = useMemo(() => rawFa ?? { totalAmount: 0, totalAccounts: 0, totalPayments: 0, bankAnalytics: [], touchpointAnalytics: [] }, [rawFa]);
   const noData = !rawFa && !showSkeleton && !isFiltered;
 
   // ── Monthly trend ──
@@ -432,7 +432,7 @@ export default function DashboardPage() {
       .map(([bank, d]) => { const bt = d.amounts.reduce((s, n) => s + Math.round(n * 100), 0) / 100; return { bank, accountCount: d.accounts.size, totalAmount: bt, debtorSum: d.paymentCount, percentage: totalAmount > 0 ? (bt / totalAmount) * 100 : 0, paymentCount: d.paymentCount }; })
       .sort((a, b) => b.totalAmount - a.totalAmount);
     return { bankAnalytics, totalAmount, totalAccounts: allAccounts.size, totalPayments: src.length };
-  }, [portfolioFiltered, apiSummary, selectedEnvironments, selectedBanks, selectedTouchpoints, fa]);
+  }, [portfolioFiltered, apiSummary, selectedEnvironments, selectedBanks, selectedTouchpoints, fa, data]);
 
   // ── Channels tab data ──
   const allTouchpoints = useMemo(() => {
@@ -779,7 +779,6 @@ export default function DashboardPage() {
   // ── Shared pagination reset on tab change / filter change ──
   // Note: selectedBanks is intentionally excluded — changing bank filter while on a paginated
   // view should not reset the page (user may be selecting banks from a later page).
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setPortfolioBankPage(1); }, [activeTab, selectedEnvironments, dateRange]);
 
   const TABS = [
@@ -827,7 +826,11 @@ export default function DashboardPage() {
                     <button key={env} onClick={() => {
                       setSelectedEnvironments((prev) => {
                         const n = new Set(prev);
-                        n.has(env) ? n.delete(env) : n.add(env);
+                        if (n.has(env)) {
+                          n.delete(env);
+                        } else {
+                          n.add(env);
+                        }
                         return n;
                       });
                       // Clear banks and touchpoints that may not exist in the new env selection
@@ -856,7 +859,15 @@ export default function DashboardPage() {
                     <button onClick={() => setSelectedBanks(new Set())} className="w-full px-3 py-2 text-left text-xs text-[#5B66E2] hover:bg-muted/50 border-b border-gray-200 dark:border-gray-700">Clear selection</button>
                   )}
                   {allBanks.map((bank) => (
-                    <button key={bank} onClick={() => setSelectedBanks((prev) => { const n = new Set(prev); n.has(bank) ? n.delete(bank) : n.add(bank); return n; })} className="flex items-center w-full px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-muted/50 transition-colors">
+                    <button key={bank} onClick={() => setSelectedBanks((prev) => {
+                      const n = new Set(prev);
+                      if (n.has(bank)) {
+                        n.delete(bank);
+                      } else {
+                        n.add(bank);
+                      }
+                      return n;
+                    })} className="flex items-center w-full px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-muted/50 transition-colors">
                       <span className={`flex items-center justify-center h-4 w-4 mr-2 rounded border ${selectedBanks.has(bank) ? "bg-[#5B66E2] border-[#5B66E2]" : "border-gray-300 dark:border-gray-600"}`}>{selectedBanks.has(bank) && <Check className="h-3 w-3 text-white" />}</span>
                       {bank}
                     </button>
@@ -879,7 +890,15 @@ export default function DashboardPage() {
                     <button onClick={() => setSelectedTouchpoints(new Set())} className="w-full px-3 py-2 text-left text-xs text-[#5B66E2] hover:bg-muted/50 border-b border-gray-200 dark:border-gray-700">Clear selection</button>
                   )}
                   {allTouchpoints.map((tp) => (
-                    <button key={tp} onClick={() => setSelectedTouchpoints((prev) => { const n = new Set(prev); n.has(tp) ? n.delete(tp) : n.add(tp); return n; })} className="flex items-center w-full px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-muted/50 transition-colors">
+                    <button key={tp} onClick={() => setSelectedTouchpoints((prev) => {
+                      const n = new Set(prev);
+                      if (n.has(tp)) {
+                        n.delete(tp);
+                      } else {
+                        n.add(tp);
+                      }
+                      return n;
+                    })} className="flex items-center w-full px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-muted/50 transition-colors">
                       <span className={`flex items-center justify-center h-4 w-4 mr-2 rounded border ${selectedTouchpoints.has(tp) ? "bg-[#5B66E2] border-[#5B66E2]" : "border-gray-300 dark:border-gray-600"}`}>{selectedTouchpoints.has(tp) && <Check className="h-3 w-3 text-white" />}</span>
                       {tp}
                     </button>
