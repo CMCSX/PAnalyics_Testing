@@ -112,8 +112,7 @@ export default function UploadPage() {
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [removing, setRemoving] = useState(false);
 
-  // Upload mode: "standard" (client-side parse + date filter) or "fast" (direct import)
-  const [uploadMode, setUploadMode] = useState<"standard" | "fast">("fast");
+
 
   const handleRemoveCurrentData = async () => {
     setRemoving(true);
@@ -290,16 +289,19 @@ export default function UploadPage() {
   };
 
   const handleFileUpload = async (file: File) => {
-    // Fast Upload: send file directly to server for streaming parse
-    if (uploadMode === "fast") {
-      return handleFastUpload(file);
-    }
-
     setUploading(true);
     setError(null);
     setUploadSuccess(false);
 
+    const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024; // 5MB
+    if (file.size >= LARGE_FILE_THRESHOLD) {
+      toast.info("Large file detected. Streaming directly to server for optimal performance...", { duration: 5000 });
+      return handleFastUpload(file);
+    }
+
     try {
+      setUploadPhase("parsing");
+      setUploadProgress(0);
       const parsedData = await parseExcelFile(file);
 
       // Show date selection popup before importing (no progress bar yet)
@@ -317,7 +319,6 @@ export default function UploadPage() {
           : "Failed to parse file. Please ensure it's a valid .xlsx or .xls file.";
       setError(message);
       toast.error("Upload failed");
-    } finally {
       setUploading(false);
     }
   };
@@ -394,13 +395,7 @@ export default function UploadPage() {
       setError("Please upload valid files (.xlsx, .xls, .csv)");
       return;
     }
-    if (uploadMode === 'fast') {
-      if (files.length > 1) {
-        setError("Enable Controlled Upload to merge multiple files.");
-        return;
-      }
-      handleFileUpload(files[0]);
-    } else if (files.length === 1) {
+    if (files.length === 1) {
       handleFileUpload(files[0]);
     } else {
       setMergeFiles((prev) => [...prev, ...files]);
@@ -414,13 +409,7 @@ export default function UploadPage() {
         f.name.endsWith(".xls") ||
         f.name.endsWith(".csv")
     );
-    if (uploadMode === 'fast') {
-      if (files.length > 1) {
-        setError("Enable Controlled Upload to merge multiple files.");
-        return;
-      }
-      if (files.length === 1) handleFileUpload(files[0]);
-    } else if (files.length === 1) {
+    if (files.length === 1) {
       handleFileUpload(files[0]);
     } else if (files.length > 1) {
       setMergeFiles((prev) => [...prev, ...files]);
@@ -778,49 +767,18 @@ export default function UploadPage() {
             onDragOver={(e) => e.preventDefault()}
             onClick={() => fileInputRef.current?.click()}
           >
-            {/* Controlled Upload Toggle */}
-            <div className="absolute top-4 right-4 z-10" onClick={(e) => e.stopPropagation()}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div
-                    className="flex items-center gap-2.5 cursor-pointer select-none"
-                    onClick={() => setUploadMode(prev => prev === 'fast' ? 'standard' : 'fast')}
-                  >
-                    <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                      Controlled Upload
-                    </span>
-                    <div className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
-                      uploadMode === 'standard'
-                        ? 'bg-[#5B66E2]'
-                        : 'bg-gray-300 dark:bg-gray-600'
-                    }`}>
-                      <div className={`absolute top-[3px] w-[18px] h-[18px] rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                        uploadMode === 'standard' ? 'translate-x-[22px]' : 'translate-x-[3px]'
-                      }`} />
-                    </div>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="max-w-[280px] text-center">
-                  <p className="font-medium mb-1">Controlled Upload</p>
-                  <p>Preview your data and filter by date range before importing. Supports merging multiple files. Best for smaller files when you need precise control over which records to import.</p>
-                </TooltipContent>
-              </Tooltip>
-            </div>
-
             <Upload className="w-12 sm:w-16 h-12 sm:h-16 mx-auto mb-3 text-gray-400 dark:text-gray-600" />
             <h3 className="text-xl sm:text-2xl font-bold mb-1 text-gray-900 dark:text-white">
-              {uploadMode === 'fast' ? 'Fast Upload' : 'Controlled Upload'}
+              Upload Payments Data
             </h3>
             <p className="text-base font-medium mb-1 text-gray-700 dark:text-gray-300">
-              {uploadMode === 'fast' ? 'Drop a file here' : 'Drop one or more files here'}
+              Drop one or more files here
             </p>
             <p className="mb-1 text-sm text-gray-500 dark:text-gray-400">
               Supports .xlsx, .xls, and .csv files
             </p>
             <p className="mb-5 text-sm text-gray-400 dark:text-gray-500 max-w-md mx-auto">
-              {uploadMode === 'fast'
-                ? 'Drop a single file to import directly to your dashboard. For larger files or to filter by date, enable the Controlled Upload toggle.'
-                : 'Preview your data and choose a date range before importing. You can also drop multiple files to merge them into one dataset.'}
+              Drop a file to automatically import. Files under 5MB allow date range selection before saving; larger files are streamed directly for optimal speed and browser performance. Drop multiple files to merge them.
             </p>
             <Button
               className="bg-[#4a55d1] hover:bg-[#4048c0] text-white w-full"
@@ -832,7 +790,7 @@ export default function UploadPage() {
               ref={fileInputRef}
               type="file"
               accept=".xlsx,.xls,.csv"
-              multiple={uploadMode !== 'fast'}
+              multiple={true}
               onChange={handleFileSelect}
               className="hidden"
             />
@@ -959,9 +917,7 @@ export default function UploadPage() {
           <div className="p-6 rounded-lg bg-card border border-border animate-fade-in-up" style={{ animationDelay: '0.25s' }}>
             {/* Mode description header */}
             <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-              {uploadMode === 'fast'
-                ? 'Drop a single file to import directly to your dashboard'
-                : 'Preview and filter your data before importing'}
+              Preview and filter your data before importing or stream direct to dashboard
             </h4>
             <div className="flex items-start gap-2 mb-4">
               <AlertCircle className="w-5 h-5 text-[#8B96F2] flex-shrink-0 mt-0.5" />
