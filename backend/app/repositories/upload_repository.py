@@ -587,6 +587,12 @@ class UploadRepository:
         if date_to:
             base_conditions.append(PaymentRecord.payment_date <= date_to)
 
+        # Select appropriate string aggregation function depending on database dialect (Postgres vs MySQL/SQLite)
+        if self.session.bind.dialect.name == "postgresql":
+            banks_agg = func.string_agg(func.distinct(PaymentRecord.bank), cast(", ", String))
+        else:
+            banks_agg = func.group_concat(func.distinct(PaymentRecord.bank))
+
         # Build the grouped subquery first, then apply HAVING-style search on the account name
         agg_query = (
             select(
@@ -594,7 +600,7 @@ class UploadRepository:
                 func.sum(PaymentRecord.payment_amount).label("total_amount"),
                 func.count(PaymentRecord.id).label("payment_count"),
                 func.count(func.distinct(PaymentRecord.bank)).label("bank_count"),
-                func.string_agg(func.distinct(PaymentRecord.bank), cast(", ", String)).label("banks"),
+                banks_agg.label("banks"),
             )
             .where(*base_conditions)
             .group_by(PaymentRecord.account)

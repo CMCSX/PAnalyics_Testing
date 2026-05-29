@@ -9,8 +9,6 @@ Revises: 002_create_audit_logs
 Create Date: 2026-05-15 (stub)
 """
 
-from alembic import op
-import sqlalchemy as sa
 
 revision = "004_delete_zero_record_sessions"
 down_revision = "002_create_audit_logs"

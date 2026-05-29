@@ -95,7 +95,7 @@ async def check():
             """)
         )
         rows400 = r7.all()
-        print(f"\nRecords with amount=400 (showing up to 20):")
+        print("\nRecords with amount=400 (showing up to 20):")
         for r in rows400:
             print(f"  bank={r[0]}, account={r[1]}, tp={r[2]}, date={r[3]}, amount={r[4]}")
 

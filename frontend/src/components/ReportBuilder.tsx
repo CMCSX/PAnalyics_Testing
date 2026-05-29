@@ -3,8 +3,8 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Plus, X, GripVertical, BarChart3, Table, FileText,
-  PieChart, TrendingUp, Type, Save, FolderOpen, Trash2,
-  Eye, Printer, ChevronDown, ChevronUp, Copy, Layout,
+  Type, Save, FolderOpen,
+  Eye, Printer, ChevronDown, ChevronUp, Layout,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DynamicChart } from "@/components/DynamicChart";
@@ -139,18 +139,11 @@ export function ReportBuilder({
   const [sections, setSections] = useState<ReportSection[]>([]);
   const [reportName, setReportName] = useState("Untitled Report");
   const [isPreview, setIsPreview] = useState(false);
-  const [isPrinting, setIsPrinting] = useState(false);
   const [showAddSection, setShowAddSection] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
 
-  // Listen for afterprint to restore chart heights
-  useEffect(() => {
-    const onAfterPrint = () => setIsPrinting(false);
-    window.addEventListener("afterprint", onAfterPrint);
-    return () => window.removeEventListener("afterprint", onAfterPrint);
-  }, []);
 
   useEffect(() => {
     setTemplates(loadTemplates());

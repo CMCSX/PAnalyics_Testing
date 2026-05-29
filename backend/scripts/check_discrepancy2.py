@@ -60,7 +60,7 @@ async def check():
 
         # Get the exact DB total to many decimal places
         r4 = await session.execute(
-            text("SELECT SUM(payment_amount)::text FROM payment_records WHERE session_id = :sid"),
+            text("SELECT CAST(SUM(payment_amount) AS CHAR) FROM payment_records WHERE session_id = :sid"),
             {"sid": session_id}
         )
         exact_total = r4.scalar_one()
@@ -71,7 +71,7 @@ async def check():
             text("""
                 SELECT 
                     COUNT(*) as total_rows,
-                    COUNT(DISTINCT (bank || '|' || account || '|' || COALESCE(payment_date,'') || '|' || payment_amount::text)) as unique_combos
+                    COUNT(DISTINCT CONCAT(bank, '|', account, '|', COALESCE(payment_date,''), '|', CAST(payment_amount AS CHAR))) as unique_combos
                 FROM payment_records
                 WHERE session_id = :sid
             """),
@@ -92,7 +92,7 @@ async def check():
             {"sid": session_id}
         )
         last_rows = r6.all()
-        print(f"\nLast 10 records (by insertion order):")
+        print("\nLast 10 records (by insertion order):")
         for r in last_rows:
             print(f"  bank='{r[0]}', account='{r[1]}', tp='{r[2]}', date='{r[3]}', amount={r[4]}")
 
@@ -108,7 +108,7 @@ async def check():
             {"sid": session_id}
         )
         first_rows = r7.all()
-        print(f"\nFirst 5 records (by insertion order):")
+        print("\nFirst 5 records (by insertion order):")
         for r in first_rows:
             print(f"  bank='{r[0]}', account='{r[1]}', tp='{r[2]}', date='{r[3]}', amount={r[4]}")
 

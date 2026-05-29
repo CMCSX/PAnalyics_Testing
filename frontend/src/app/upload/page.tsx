@@ -6,7 +6,6 @@ import { Upload, AlertCircle, CheckCircle2, FileSpreadsheet, RotateCcw, Trash2, 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useData } from "@/context/DataContext";
 import { useAuth } from "@/context/AuthContext";
 import { parseExcelFile } from "@/utils/excelParser";

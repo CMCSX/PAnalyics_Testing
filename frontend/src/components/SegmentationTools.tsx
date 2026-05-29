@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Users, Pencil, Trash2, Plus, Check, X } from "lucide-react";
 import { PaymentRecord } from "@/types/data";
 

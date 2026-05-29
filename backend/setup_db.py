@@ -8,7 +8,6 @@ After running this, Alembic is stamped at 'head' so future migrations work norma
 """
 
 import asyncio
-import sys
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine

@@ -36,7 +36,7 @@ export function VirtualTable<T extends Record<string, unknown>>({
   emptyMessage = "No data",
   className = "",
 }: VirtualTableProps<T>) {
-  const { containerRef, virtualItems, totalHeight, containerStyle, innerStyle } =
+  const { containerRef, virtualItems, containerStyle, innerStyle } =
     useVirtualScroll({
       itemCount: data.length,
       itemHeight: rowHeight,

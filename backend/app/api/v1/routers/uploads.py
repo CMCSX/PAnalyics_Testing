@@ -6,13 +6,6 @@ import uuid
 from decimal import Decimal
 from typing import AsyncIterator
 
-
-class _DecimalEncoder(json.JSONEncoder):
-    def default(self, o: object) -> object:
-        if isinstance(o, Decimal):
-            return float(o)
-        return super().default(o)
-
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +34,14 @@ from app.schemas.upload import (
     AccountSummary,
     MAX_DETAIL_RECORDS,
 )
+
+
+class _DecimalEncoder(json.JSONEncoder):
+    def default(self, o: object) -> object:
+        if isinstance(o, Decimal):
+            return float(o)
+        return super().default(o)
+
 
 router = APIRouter(prefix="/uploads", tags=["Uploads"])
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -30,7 +30,7 @@ const COLLAPSED_KEY = "sidebar_collapsed";
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { isOpen, setIsOpen, isCollapsed, setIsCollapsed } = useSidebar();
+  const { setIsOpen, isCollapsed, setIsCollapsed } = useSidebar();
   const { user, logout } = useAuth();
 
   // Initialise from localStorage on mount
