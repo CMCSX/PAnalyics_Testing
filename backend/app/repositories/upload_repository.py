@@ -767,8 +767,7 @@ class UploadRepository:
         ]
 
         # Monthly trend: sum of payment_amount grouped by year-month (first 7 chars of payment_date)
-        from sqlalchemy import literal_column
-        month_expr = literal_column("LEFT(payment_records.payment_date, 7)")
+        month_expr = func.substr(PaymentRecord.payment_date, 1, 7)
         monthly_rows = await self.session.execute(
             select(
                 month_expr.label("month"),

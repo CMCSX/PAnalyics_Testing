@@ -7,7 +7,7 @@ python-multipart
 
 # Database
 sqlalchemy[asyncio]
-asyncpg
+aiomysql
 alembic
 
 # Auth
@@ -21,4 +21,3 @@ openpyxl
 pytest
 pytest-asyncio
 httpx
-aiosqlite

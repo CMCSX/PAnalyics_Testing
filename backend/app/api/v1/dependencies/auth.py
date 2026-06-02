@@ -57,9 +57,8 @@ async def get_current_user(
 ) -> User:
     """FastAPI dependency to extract and validate the current authenticated user.
 
-    Schedules a non-blocking background write to last_activity_at so the
-    inactivity cleanup job stays accurate without adding any latency to the
-    request itself.
+    Schedules a non-blocking background write to last_activity_at to track
+    user activity without adding any latency to the request itself.
     """
     service = AuthService(db)
     user = await service.get_current_user(credentials.credentials)

@@ -170,8 +170,8 @@ export default function DashboardPage() {
   useEffect(() => {
     if (sessionId && apiError && (apiError.message.includes("404") || apiError.message.includes("Not Found"))) {
       setSessionId(null);
-      toast("Session expired", {
-        description: "Your uploaded data was cleared after 1 hour of inactivity. Please upload a new file.",
+      toast("Session not found", {
+        description: "The active upload session could not be found. Please select or upload a new file.",
         duration: 8000,
       });
     }

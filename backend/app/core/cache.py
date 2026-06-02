@@ -66,7 +66,19 @@ def cache_invalidate(prefix: str) -> int:
     """
     if not prefix:
         return 0
-    to_remove = [k for k in _cache if k.startswith(prefix) or prefix in k]
+    # Special case: passing 'dashboard:{session_id}' when the actual key is
+    # 'dashboard:{user_id}:{session_id}:...' cannot match via direct prefix/substring.
+    # We detect prefix starting with 'dashboard:' and containing a session ID,
+    # and match keys containing both 'dashboard' and the session ID.
+    if prefix.startswith("dashboard:"):
+        parts = prefix.split(":", 1)
+        if len(parts) > 1 and parts[1]:
+            session_id = parts[1]
+            to_remove = [k for k in _cache if "dashboard" in k and session_id in k]
+        else:
+            to_remove = [k for k in _cache if k.startswith(prefix)]
+    else:
+        to_remove = [k for k in _cache if k.startswith(prefix) or prefix in k]
     for k in to_remove:
         _cache.pop(k, None)
     return len(to_remove)

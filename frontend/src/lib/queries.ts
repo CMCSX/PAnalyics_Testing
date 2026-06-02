@@ -58,7 +58,7 @@ export function useDashboard(token: string | null, sessionId: string | null, ses
     refetchOnMount: false,
     // No refetchInterval — the dashboard is event-driven (SSE invalidates on new upload).
     // Auto-polling every 5 min was causing 401/404 bursts during token refresh and
-    // after the inactivity purge deletes the session.
+    // after the session is deleted.
     placeholderData: keepPreviousData,
   });
 }

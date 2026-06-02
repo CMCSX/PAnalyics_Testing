@@ -17,6 +17,7 @@ from app.db.base import Base
 from app.models.user import User  # noqa: F401
 from app.models.upload import UploadSession, PaymentRecord  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
+from app.models.reference_data import Environment, Campaign, Touchpoint  # noqa: F401
 from app.core.config import settings
 
 
@@ -38,8 +39,8 @@ async def main() -> None:
         ))
         # Clear any existing stamps and insert the latest revision
         await conn.execute(text("DELETE FROM alembic_version"))
-        await conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('003_audit_log_amount_to_numeric')"))
-        print("Alembic stamped at head (003_audit_log_amount_to_numeric).")
+        await conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('005_audit_log_amount_fix')"))
+        print("Alembic stamped at head (005_audit_log_amount_fix).")
 
     await engine.dispose()
     print("\nSetup complete! You can now start the backend and run create_admin.py to add an admin user.")

@@ -76,8 +76,7 @@ class AuthService:
                 detail="User not found or inactive.",
             )
 
-        # Update last_activity_at so the inactivity purge doesn't delete this
-        # user's uploads immediately after a token refresh.
+        # Update last_activity_at to record the user's latest interaction.
         from app.api.v1.dependencies.auth import _fire_and_forget_activity
         _fire_and_forget_activity(user_id)
 

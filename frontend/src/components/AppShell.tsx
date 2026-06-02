@@ -53,7 +53,7 @@ function SessionRestorer() {
         // Validate the stored sessionId still exists on the backend
         const match = sessions.find((s) => s.id === currentSessionId);
         if (!match) {
-          // Session expired/deleted (e.g. inactivity purge) — clear it silently
+          // Session deleted — clear it silently
           setSessionId(null);
           setSessionValidated(true);
         } else {

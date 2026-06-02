@@ -36,7 +36,27 @@ def test_format_date_dash_year_last():
 def test_format_date_excel_serial():
     assert _format_date("45628") == "2024-12-02"
     assert _format_date(45628) == "2024-12-02"
+    assert _format_date("45628.0") == "2024-12-02"
+    assert _format_date(45628.0) == "2024-12-02"
 
 def test_format_date_invalid_fallback():
     assert _format_date("not a date") == "not a date"
     assert _format_date("2026/02/30") == "2026/02/30"  # invalid date value
+
+def test_cache_invalidate():
+    from app.core.cache import cache_set, cache_get, cache_invalidate, cache_clear
+    cache_clear()
+    
+    # Set a dashboard key with user_id in the middle
+    cache_set("dashboard:user123:session456:from:to", {"data": "test"})
+    cache_set("dashboard:user123:session789:from:to", {"data": "other"})
+    cache_set("other:key", "val")
+    
+    # Invalidate dashboard:session456
+    cache_invalidate("dashboard:session456")
+    
+    assert cache_get("dashboard:user123:session456:from:to") is None
+    assert cache_get("dashboard:user123:session789:from:to") == {"data": "other"}
+    assert cache_get("other:key") == "val"
+    
+    cache_clear()

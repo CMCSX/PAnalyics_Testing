@@ -62,18 +62,16 @@ export default function TransactionsPage() {
   };
   const { data: txPage, isFetching: apiLoading, error: txError } = useTransactions(token, sessionId, apiFilters, sessionValidated);
 
-  // Auto-clear stale session on 404 or 500 (e.g. after DB migration / new database)
+  // Auto-clear stale session only on 404 (session genuinely deleted). Ignore 500s — they are transient server errors.
   useEffect(() => {
-    if (txError && (txError.message.includes("404") || txError.message.includes("Not Found") || txError.message.includes("500") || txError.message.includes("Internal Server Error"))) {
+    if (sessionId && txError && (txError.message.includes("404") || txError.message.includes("Not Found"))) {
       setSessionId(null);
-      if (txError.message.includes("404") || txError.message.includes("Not Found")) {
-        toast("Session expired", {
-          description: "Your uploaded data was cleared after 1 hour of inactivity. Please upload a new file.",
-          duration: 8000,
-        });
-      }
+      toast("Session not found", {
+        description: "The active upload session could not be found. Please select or upload a new file.",
+        duration: 8000,
+      });
     }
-  }, [txError, setSessionId]);
+  }, [txError, sessionId, setSessionId]);
 
   const apiRows = txPage?.items ?? null;
   const apiTotal = txPage?.total ?? 0;

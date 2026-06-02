@@ -382,18 +382,19 @@ async def export_all_records(
 async def export_records_csv_stream(
     session_id: str,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Stream ALL payment records for a session as a CSV file.
     Uses server-side cursor streaming — safe for sessions with millions of records
     since data is never fully loaded into memory.
     """
-    repo = UploadRepository(db)
-    session_meta = await repo.get_session_metadata(session_id, current_user.id)
-    if not session_meta:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload session not found.")
+    from app.db.session import AsyncSessionFactory
 
-    safe_name = re.sub(r"[^\w\-.]", "_", session_meta.file_name or "export")
+    async with AsyncSessionFactory() as db:
+        repo = UploadRepository(db)
+        session_meta = await repo.get_session_metadata(session_id, current_user.id)
+        if not session_meta:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload session not found.")
+        safe_name = re.sub(r"[^\w\-.]", "_", session_meta.file_name or "export")
 
     async def csv_row_generator() -> AsyncIterator[str]:
         # Write CSV header
@@ -402,19 +403,21 @@ async def export_records_csv_stream(
         writer.writerow(["Bank", "Account", "Touchpoint", "Payment Date", "Payment Amount", "Environment"])
         yield buf.getvalue()
 
-        # Stream rows in batches
-        async for record in repo.stream_records_for_export(session_id, current_user.id):
-            buf = io.StringIO()
-            writer = csv.writer(buf)
-            writer.writerow([
-                record.bank,
-                record.account,
-                record.touchpoint or "",
-                record.payment_date or "",
-                float(record.payment_amount),
-                record.environment or "",
-            ])
-            yield buf.getvalue()
+        # Stream rows in batches using a fresh connection dedicated to this stream
+        async with AsyncSessionFactory() as stream_db:
+            stream_repo = UploadRepository(stream_db)
+            async for record in stream_repo.stream_records_for_export(session_id, current_user.id):
+                buf = io.StringIO()
+                writer = csv.writer(buf)
+                writer.writerow([
+                    record.bank,
+                    record.account,
+                    record.touchpoint or "",
+                    record.payment_date or "",
+                    float(record.payment_amount),
+                    record.environment or "",
+                ])
+                yield buf.getvalue()
 
     return StreamingResponse(
         csv_row_generator(),

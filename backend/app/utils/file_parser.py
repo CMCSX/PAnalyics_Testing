@@ -103,15 +103,18 @@ def _format_date(value: object) -> str:
         except (ValueError, IndexError):
             pass
     
-    # Excel serial number (integer between 30000 and 100000)
-    if re.match(r"^\d+$", s):
-        num = int(s)
-        if 30000 < num < 100000:
-            from datetime import timedelta
+    # Excel serial number (integer or float between 30000 and 100000)
+    try:
+        if re.match(r"^\d+(?:\.\d+)?$", s):
+            num = float(s)
+            if 30000 < num < 100000:
+                from datetime import timedelta
 
-            epoch = datetime(1899, 12, 30)
-            dt = epoch + timedelta(days=num)
-            return dt.strftime("%Y-%m-%d")
+                epoch = datetime(1899, 12, 30)
+                dt = epoch + timedelta(days=int(num))
+                return dt.strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        pass
     
     # If all parsing fails, return the original string
     return s

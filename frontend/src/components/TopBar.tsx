@@ -20,7 +20,7 @@ export function TopBar() {
       {/* Left: logo + file name */}
       <div className="flex items-center gap-6">
         <Image src="/SVG Lgo.svg" alt="Logo" width={120} height={28} className="h-7 w-auto flex-shrink-0" priority />
-        {fileName && (
+        {mounted && fileName && (
           <span className="hidden sm:inline text-sm text-muted-foreground truncate max-w-[500px]">
             {fileName}
           </span>
